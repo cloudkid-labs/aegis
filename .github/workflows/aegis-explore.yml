@@ -24,72 +24,13 @@ jobs:
 
       # All user-controlled inputs arrive via env, never interpolated into shell
       # source: a target like https://x/$(id) must not execute on the runner.
-      - name: Run explore tools
+      # The executor reads tools.json from this checkout, so the configured
+      # images/args (and any newly registered Explore tool) are what run.
+      - name: Run explore tools and post results
         env:
           TARGET_URL: ${{ inputs.target_url }}
           TOOLS_JSON: ${{ inputs.tools }}
           OPTIONS_JSON: ${{ inputs.options }}
-        run: |
-          mkdir -p /tmp/aegis-out
-          : > /tmp/aegis-out/failures.txt
-          HOST=$(printf '%s' "$TARGET_URL" | sed -E 's|https?://||' | sed 's|/.*||' | sed 's|:.*||')
-          DEPTH=$(printf '%s' "$OPTIONS_JSON" | jq -r '.depth // 2')
-          case "$DEPTH" in ''|*[!0-9]*) DEPTH=2 ;; esac
-
-          run_tool() {
-            local name="$1" image="$2"; shift 2
-            echo "=== Running $name ==="
-            if ! docker run --rm -v /tmp/aegis-out:/out "$image" "$@"; then
-              echo "$name" >> /tmp/aegis-out/failures.txt
-            fi
-          }
-
-          has() { printf '%s' "$TOOLS_JSON" | jq -e --arg t "$1" 'index($t)' > /dev/null 2>&1; }
-
-          if has subfinder; then run_tool subfinder projectdiscovery/subfinder:v2.17.0 -d "$HOST" -json -o /out/subfinder.json -silent; fi
-          if has dnsx;     then run_tool dnsx     projectdiscovery/dnsx:v1.2.2     -d "$HOST" -json -o /out/dnsx.json -silent; fi
-          if has httpx;    then run_tool httpx    projectdiscovery/httpx:v1.12.0   -u "$TARGET_URL" -json -o /out/httpx.json -title -tech-detect -status-code -silent; fi
-          if has katana;   then run_tool katana   projectdiscovery/katana:v1.8.0   -u "$TARGET_URL" -jsonl -o /out/katana.jsonl -d "$DEPTH" -silent; fi
-          if has naabu;    then run_tool naabu    projectdiscovery/naabu:v2.3.3    -host "$HOST" -json -o /out/naabu.json -silent; fi
-          if has alterx;   then run_tool alterx   projectdiscovery/alterx:v0.2.0   -d "$HOST" -o /out/alterx.txt; fi
-
-      - name: Post results to Aegis
-        env:
           CB_URL: ${{ inputs.callback_url }}
           CB_TOKEN: ${{ inputs.callback_token }}
-        run: |
-          node -e '
-            const fs = require("fs");
-            const dir = "/tmp/aegis-out";
-            const artifacts = [];
-            const files = [
-              { name: "subfinder", file: "subfinder.json", format: "json" },
-              { name: "dnsx", file: "dnsx.json", format: "json" },
-              { name: "httpx", file: "httpx.json", format: "json" },
-              { name: "katana", file: "katana.jsonl", format: "jsonl" },
-              { name: "naabu", file: "naabu.json", format: "json" },
-              { name: "alterx", file: "alterx.txt", format: "text" },
-            ];
-            for (const f of files) {
-              const p = `${dir}/${f.file}`;
-              if (fs.existsSync(p)) {
-                const raw = fs.readFileSync(p, "utf8");
-                const data = f.format === "text" ? raw
-                  : raw.split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-                artifacts.push({ tool: f.name, format: f.format, data });
-              }
-            }
-            const failures = fs.existsSync(`${dir}/failures.txt`)
-              ? fs.readFileSync(`${dir}/failures.txt`, "utf8").split("\n").filter(Boolean) : [];
-            // Every selected tool failed and nothing was produced: report failure,
-            // not a misleading "completed with zero discoveries".
-            const body = (artifacts.length === 0 && failures.length > 0)
-              ? JSON.stringify({ error: `tools failed: ${failures.join(", ")}` })
-              : JSON.stringify({ artifacts, failures });
-            fetch(process.env.CB_URL, {
-              method: "POST",
-              headers: { authorization: "Bearer " + process.env.CB_TOKEN, "content-type": "application/json" },
-              body,
-            }).then(r => { console.log("callback", r.status); if (!r.ok) process.exit(1); })
-              .catch(e => { console.error(e); process.exit(1); });
-          '
+        run: node scripts/run-explore.mjs

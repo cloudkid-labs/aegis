@@ -26,10 +26,10 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
   const { artifacts, error, failures } = body.value as { artifacts?: Artifact[]; error?: string; failures?: string[] };
 
   if (typeof error === "string" && error.length > 0) {
-    await store.setStatus(scanId, "failed", { error });
-    await store.addEvent(scanId, "failed", error);
+    const failed = await store.transition(scanId, ["queued", "running"], "failed", { error });
+    if (failed) await store.addEvent(scanId, "failed", error);
     await stub.fetch("https://do/cancel", { method: "POST" });
-    return json({ ok: true, status: "failed" });
+    return json({ ok: true, status: failed ? "failed" : (await store.get(scanId))!.status });
   }
 
   const now = new Date().toISOString();
@@ -46,10 +46,15 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
   }
 
   await store.insertAssets(allAssets);
-  await store.setStatus(scanId, "completed", { completedAt: now });
+  // Conditional: a cancel or timeout may have landed while artifacts were
+  // uploading. Keep that terminal verdict rather than resurrecting the scan.
+  const completed = await store.transition(scanId, ["queued", "running"], "completed", { completedAt: now });
+  await stub.fetch("https://do/cancel", { method: "POST" });
+  if (!completed) {
+    return json({ ok: true, status: (await store.get(scanId))!.status });
+  }
   const failNote = Array.isArray(failures) && failures.length > 0 ? `; ${failures.length} tool failure(s): ${failures.join(", ")}` : "";
   await store.addEvent(scanId, "completed", `${allAssets.length} assets${failNote}`);
-  await stub.fetch("https://do/cancel", { method: "POST" });
 
   return json({ ok: true, assets: allAssets.length });
 }

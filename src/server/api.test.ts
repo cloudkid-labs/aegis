@@ -245,3 +245,39 @@ describe("operator gate: session or bearer", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("callback terminal-state guard", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+  const acceptingDo = {
+    idFromName: (n: string) => n,
+    get: () => ({ fetch: async () => new Response(null, { status: 200 }) }),
+  } as unknown as DurableObjectNamespace;
+  const callbackBody = JSON.stringify({ artifacts: [{ tool: "subfinder", format: "json", data: [{ host: "x.example.com" }] }] });
+
+  it("completes a running scan", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "running");
+    env.SCAN_COORDINATOR = acceptingDo;
+    env.ARTIFACTS = { put: async () => {} } as unknown as R2Bucket;
+    const app = createApiApp(() => store);
+    const res = await app.request(`/executors/callback/${ID}`, { method: "POST", headers: { "content-type": "application/json" }, body: callbackBody }, env);
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { assets: number }).toMatchObject({ assets: 1 });
+    expect((await store.get(ID))!.status).toBe("completed");
+  });
+
+  it("does not resurrect a scan cancelled while artifacts upload", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "running");
+    env.SCAN_COORDINATOR = acceptingDo;
+    // A cancel lands mid-callback (during the R2 upload), after the handler's
+    // opening terminal check but before its completion transition.
+    env.ARTIFACTS = { put: async () => { await store.transition(ID, ["queued", "running"], "cancelled"); } } as unknown as R2Bucket;
+    const app = createApiApp(() => store);
+    const res = await app.request(`/executors/callback/${ID}`, { method: "POST", headers: { "content-type": "application/json" }, body: callbackBody }, env);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe("cancelled");
+    expect((await store.get(ID))!.status).toBe("cancelled");
+    expect((await store.events(ID)).some((e) => e.event === "completed")).toBe(false);
+  });
+});

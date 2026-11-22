@@ -95,7 +95,7 @@ export async function handleCancelScan(_req: Request, env: Env, store: ScanStore
   if (rec.status === "completed" || rec.status === "failed" || rec.status === "cancelled") return jsonError("Scan already terminal", 409);
   const stub = env.SCAN_COORDINATOR.get(env.SCAN_COORDINATOR.idFromName(id));
   await stub.fetch("https://do/cancel", { method: "POST" });
-  await store.setStatus(id, "cancelled");
-  await store.addEvent(id, "cancelled");
-  return json({ id, status: "cancelled" });
+  const cancelled = await store.transition(id, ["queued", "running"], "cancelled");
+  if (cancelled) await store.addEvent(id, "cancelled");
+  return json({ id, status: cancelled ? "cancelled" : (await store.get(id))!.status });
 }

@@ -43,6 +43,20 @@ export function memoryScanStore(): ScanStore {
       });
     },
 
+    async transition(id, allowed, to, patch = {}) {
+      const rec = scans.get(id);
+      if (!rec || !allowed.includes(rec.status)) return false;
+      scans.set(id, {
+        ...rec,
+        status: to,
+        updatedAt: new Date().toISOString(),
+        externalUrl: patch.externalUrl !== undefined ? patch.externalUrl : rec.externalUrl,
+        error: patch.error !== undefined ? patch.error : rec.error,
+        completedAt: patch.completedAt !== undefined ? patch.completedAt : rec.completedAt,
+      });
+      return true;
+    },
+
     async claimOldest(executor, now) {
       const oldest = [...scans.values()]
         .filter((rec) => rec.executor === executor && rec.status === "queued")

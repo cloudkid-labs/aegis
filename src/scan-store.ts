@@ -12,6 +12,12 @@ export interface ScanStore {
   get(id: string): Promise<ScanRecord | null>;
   list(limit: number): Promise<ScanRecord[]>;
   setStatus(id: string, status: ScanStatus, patch?: ScanStatusPatch): Promise<void>;
+  /**
+   * Atomic conditional status change: writes only if the current status is in
+   * `allowed`, returning false otherwise. A late callback, timeout or cancel
+   * therefore cannot resurrect or overwrite a scan that already went terminal.
+   */
+  transition(id: string, allowed: ScanStatus[], to: ScanStatus, patch?: ScanStatusPatch): Promise<boolean>;
   /** Atomically flip the oldest queued scan for one executor to running. */
   claimOldest(executor: ExecutorName, now: string): Promise<ScanRecord | null>;
   addEvent(scanId: string, event: string, detail?: string): Promise<void>;
@@ -160,6 +166,22 @@ export function d1ScanStore(db: D1Database): ScanStore {
         )
         .bind(id, status, new Date().toISOString(), patch.externalUrl ?? null, patch.error ?? null, patch.completedAt ?? null)
         .run();
+    },
+
+    async transition(id, allowed, to, patch = {}) {
+      if (allowed.length === 0) return false;
+      const ph = allowed.map((_, i) => `?${7 + i}`).join(",");
+      const res = await db
+        .prepare(
+          `UPDATE scans SET status=?2, updated_at=?3,
+             external_url=COALESCE(?4, external_url),
+             error=COALESCE(?5, error),
+             completed_at=COALESCE(?6, completed_at)
+           WHERE id=?1 AND status IN (${ph})`,
+        )
+        .bind(id, to, new Date().toISOString(), patch.externalUrl ?? null, patch.error ?? null, patch.completedAt ?? null, ...allowed)
+        .run();
+      return (res.meta?.changes ?? 0) > 0;
     },
 
     async claimOldest(executor, now) {

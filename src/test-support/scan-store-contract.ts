@@ -185,5 +185,34 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       expect(events[1]!.detail).toBe("run-1");
       expect(await store.events("events-missing")).toEqual([]);
     });
+
+    it("transition writes only from an allowed status", async () => {
+      const store = make();
+      await store.create(rec("trans"));
+      expect(await store.transition("trans", ["queued", "running"], "completed", { completedAt: "2026-11-22T03:00:00.000Z" })).toBe(true);
+      const got = (await store.get("trans"))!;
+      expect(got.status).toBe("completed");
+      expect(got.completedAt).toBe("2026-11-22T03:00:00.000Z");
+    });
+
+    it("transition refuses to resurrect a terminal scan", async () => {
+      const store = make();
+      await store.create(rec("trans-term", { status: "cancelled" }));
+      expect(await store.transition("trans-term", ["queued", "running"], "completed")).toBe(false);
+      expect((await store.get("trans-term"))!.status).toBe("cancelled");
+    });
+
+    it("transition is first-writer-wins between cancel and completion", async () => {
+      const store = make();
+      await store.create(rec("trans-race"));
+      expect(await store.transition("trans-race", ["queued", "running"], "cancelled")).toBe(true);
+      expect(await store.transition("trans-race", ["queued", "running"], "completed")).toBe(false);
+      expect((await store.get("trans-race"))!.status).toBe("cancelled");
+    });
+
+    it("transition on a missing scan returns false", async () => {
+      const store = make();
+      expect(await store.transition("trans-missing", ["queued"], "running")).toBe(false);
+    });
   });
 }

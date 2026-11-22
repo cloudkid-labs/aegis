@@ -82,28 +82,23 @@ export class ScanCoordinator implements DurableObject {
   }
 
   /**
-   * The timeout path. A scan that already reached a terminal state is left
-   * alone: the alarm may fire late, after a callback completed the scan.
+   * The timeout path. The UPDATE is conditional on a nonterminal status, so a
+   * late alarm cannot overwrite a scan the callback already completed (or a
+   * cancel already closed). The event is written only if the UPDATE landed.
    */
   async alarm(): Promise<void> {
     const scanId = await this.state.storage.get<string>("scanId");
     if (!scanId) return;
 
-    const row = await this.env.AEGIS_DB.prepare("SELECT status FROM scans WHERE id=?1")
-      .bind(scanId)
-      .first<{ status: string }>();
-    if (!row || (row.status !== "queued" && row.status !== "running")) return;
-
     const now = new Date().toISOString();
-    // Status and event land together; a half-written timeout is unreadable history.
-    await this.env.AEGIS_DB.batch([
-      this.env.AEGIS_DB.prepare(
-        "UPDATE scans SET status='failed', error='timeout', updated_at=?2 WHERE id=?1",
-      ).bind(scanId, now),
-      this.env.AEGIS_DB.prepare(
-        "INSERT INTO scan_events (scan_id, event, detail, created_at) VALUES (?1,'failed','timeout',?2)",
-      ).bind(scanId, now),
-    ]);
+    const res = await this.env.AEGIS_DB.prepare(
+      "UPDATE scans SET status='failed', error='timeout', updated_at=?2 WHERE id=?1 AND status IN ('queued','running')",
+    ).bind(scanId, now).run();
+    if ((res.meta?.changes ?? 0) === 0) return;
+
+    await this.env.AEGIS_DB.prepare(
+      "INSERT INTO scan_events (scan_id, event, detail, created_at) VALUES (?1,'failed','timeout',?2)",
+    ).bind(scanId, now).run();
   }
 }
 
