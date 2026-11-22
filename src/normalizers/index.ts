@@ -1,7 +1,7 @@
 import type { Asset } from "../types";
 import { normalizeAlterx, normalizeDnsx, normalizeHttpx, normalizeKatana, normalizeNaabu, normalizeSubfinder } from "./explore";
 
-type NormalizerFn = (data: unknown, scanId: string, now: string) => Asset[];
+type NormalizerFn = (data: unknown, scanId: string, now: string) => Promise<Asset[]>;
 
 const NORMALIZERS: Record<string, NormalizerFn> = {
   "subfinder-json": normalizeSubfinder,
@@ -12,7 +12,7 @@ const NORMALIZERS: Record<string, NormalizerFn> = {
   "alterx-text": normalizeAlterx,
 };
 
-export function normalize(normalizerKey: string, data: unknown, scanId: string, now: string): Asset[] {
+export async function normalize(normalizerKey: string, data: unknown, scanId: string, now: string): Promise<Asset[]> {
   const fn = NORMALIZERS[normalizerKey];
   if (!fn) return [];
   return fn(data, scanId, now);

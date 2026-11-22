@@ -52,6 +52,8 @@ export interface ToolEntry {
   outputFormat: OutputFormat;
   outputType: OutputType;
   normalizer: string;
+  /** Opt-in tools (naabu, alterx) are skipped unless explicitly selected. */
+  default?: boolean;
 }
 
 /**

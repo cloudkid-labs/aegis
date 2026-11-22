@@ -85,6 +85,7 @@ export function parseRegistry(input: unknown): ToolEntry[] {
       outputFormat,
       outputType,
       normalizer,
+      ...(entry.default === false ? { default: false } : {}),
     };
   });
 }

@@ -37,7 +37,7 @@ export async function handleCreateScan(req: Request, env: Env, store: ScanStore)
 
   const allTools = toolsForPhase(scanPhase);
   const requestedTools = Array.isArray(options?.tools) ? (options!.tools as string[]) : null;
-  const tools = requestedTools ? allTools.filter((t) => requestedTools.includes(t.name)) : allTools.filter((t) => (t as { default?: boolean }).default !== false);
+  const tools = requestedTools ? allTools.filter((t) => requestedTools.includes(t.name)) : allTools.filter((t) => t.default !== false);
   if (tools.length === 0) return jsonError("No tools selected", 400);
 
   const timeoutSeconds = 900;

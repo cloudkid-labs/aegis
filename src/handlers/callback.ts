@@ -23,7 +23,7 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
 
   const body = await readJsonBody(req, CALLBACK_BODY_LIMIT);
   if (!body.ok) return body.response;
-  const { artifacts, error } = body.value as { artifacts?: Artifact[]; error?: string };
+  const { artifacts, error, failures } = body.value as { artifacts?: Artifact[]; error?: string; failures?: string[] };
 
   if (typeof error === "string" && error.length > 0) {
     await store.setStatus(scanId, "failed", { error });
@@ -41,13 +41,14 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
 
     const tool = getTool(artifact.tool);
     const normalizerKey = tool?.normalizer ?? `${artifact.tool}-${artifact.format}`;
-    const assets = normalize(normalizerKey, artifact.data, scanId, now);
+    const assets = await normalize(normalizerKey, artifact.data, scanId, now);
     allAssets.push(...assets);
   }
 
   await store.insertAssets(allAssets);
   await store.setStatus(scanId, "completed", { completedAt: now });
-  await store.addEvent(scanId, "completed", `${allAssets.length} assets`);
+  const failNote = Array.isArray(failures) && failures.length > 0 ? `; ${failures.length} tool failure(s): ${failures.join(", ")}` : "";
+  await store.addEvent(scanId, "completed", `${allAssets.length} assets${failNote}`);
   await stub.fetch("https://do/cancel", { method: "POST" });
 
   return json({ ok: true, assets: allAssets.length });

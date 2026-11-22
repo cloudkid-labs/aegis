@@ -28,7 +28,8 @@
       "args": ["-d", "{{host}}", "-o", "/out/alterx.txt"],
       "outputFormat": "text",
       "outputType": "assets",
-      "normalizer": "alterx-text"
+      "normalizer": "alterx-text",
+      "default": false
     },
     {
       "name": "httpx",
@@ -58,7 +59,8 @@
       "args": ["-host", "{{host}}", "-json", "-o", "/out/naabu.json", "-silent"],
       "outputFormat": "json",
       "outputType": "assets",
-      "normalizer": "naabu-json"
+      "normalizer": "naabu-json",
+      "default": false
     },
     {
       "name": "nuclei",

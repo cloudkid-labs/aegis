@@ -106,3 +106,30 @@ describe("parseRegistry", () => {
     expect(() => parseRegistry({ tools: [] })).toThrow(/empty/);
   });
 });
+
+describe("opt-in default flag", () => {
+  it("preserves default:false through parseRegistry", () => {
+    const [tool] = parseRegistry({ tools: [base({ default: false })] });
+    expect(tool!.default).toBe(false);
+  });
+
+  it("omits default when not set (defaults to enabled)", () => {
+    const [tool] = parseRegistry({ tools: [base()] });
+    expect(tool!.default).toBeUndefined();
+  });
+
+  it("shipped naabu and alterx are opt-in; core explore tools are not", () => {
+    expect(getTool("naabu")!.default).toBe(false);
+    expect(getTool("alterx")!.default).toBe(false);
+    for (const name of ["subfinder", "dnsx", "httpx", "katana"]) {
+      expect(getTool(name)!.default).toBeUndefined();
+    }
+  });
+
+  it("default selection excludes opt-in tools", () => {
+    const selected = toolsForPhase("explore").filter((t) => t.default !== false).map((t) => t.name);
+    expect(selected).toEqual(["subfinder", "dnsx", "httpx", "katana"]);
+    expect(selected).not.toContain("naabu");
+    expect(selected).not.toContain("alterx");
+  });
+});
