@@ -11,12 +11,27 @@ import "../styles/aegis.css";
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>404 — Aegis</title>
+    <meta name="description" content="No such route in the Aegis recon console." />
+    <title>404: Aegis</title>
   </head>
   <body>
-    <main>
-      <h1>404</h1>
-      <p>Not found. <a href="/">Back to Aegis</a></p>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header>
+      <div class="brand">
+        <h1>Aegis</h1>
+      </div>
+    </header>
+    <main id="main-content">
+      <section class="notfound">
+        <h2>No such route</h2>
+        <p class="notfound-code" aria-hidden="true">404</p>
+        <p class="notfound-copy">This path is not part of the console. <a href="/">Back to Aegis</a></p>
+      </section>
     </main>
+    <footer>
+      <span>Aegis</span>
+      <span>OSS recon &amp; pentest</span>
+      <span>Runs on Cloudflare Workers</span>
+    </footer>
   </body>
 </html>
