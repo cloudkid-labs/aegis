@@ -14,11 +14,12 @@
   "migrations": [{ "tag": "scan-coordinator-v1", "new_sqlite_classes": ["ScanCoordinator"] }],
   "routes": [{ "pattern": "aegis.cloudkid.link", "custom_domain": true }],
   "assets": {
-    "directory": "./public",
+    // Astro static build (astro.config.mjs). Every request enters the Worker
+    // first; src/index.ts answers /health and /api/* itself and hands
+    // everything else to this binding, which serves /, /_astro/* and 404.html.
+    "directory": "./dist",
     "binding": "ASSETS",
-    // Array, not true: only these paths reach the Worker. Everything else is
-    // answered by the assets router (dashboard at /, 404-page for misses).
-    "run_worker_first": ["/api/*", "/health", "/health/*"],
+    "run_worker_first": true,
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },

@@ -4,9 +4,11 @@ on:
     branches: [main]
     paths:
       - "src/**"
-      - "public/**"
+      - "astro.config.mjs"
       - "tools.json"
       - "migrations/**"
+      - "package.json"
+      - "yarn.lock"
       - "wrangler.jsonc"
       - ".github/workflows/deploy-aegis.yaml"
   workflow_dispatch:
@@ -19,6 +21,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "24" }
       - run: yarn install --frozen-lockfile
+      # Astro build first: the workers tests and the deploy both need ./dist.
+      - run: npm run build
       - run: npx tsc --noEmit
       - run: npx vitest run
       - name: Apply D1 migrations

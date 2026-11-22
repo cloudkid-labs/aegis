@@ -41,6 +41,9 @@ export default defineConfig({
         test: {
           name: "workers",
           include: ["src/**/*.workers.test.ts"],
+          // The ASSETS binding in wrangler.jsonc resolves to the Astro build
+          // in ./dist; build it once when a fresh clone has no output yet.
+          globalSetup: ["./vitest.global-setup.mts"],
         },
       },
     ],

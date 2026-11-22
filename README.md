@@ -14,7 +14,7 @@ OSS reconnaissance and penetration testing platform on Cloudflare Workers.
 
 ## Architecture
 
-- **Worker + Assets** — API (`/api/*`) and dashboard SPA at `aegis.cloudkid.link`
+- **Astro + Hono Worker** — static dashboard built by Astro to `./dist` and served through the `ASSETS` binding; `/api/*` and `/health` are answered by Hono in `src/index.ts`
 - **Durable Object** — per-scan timeout alarm + single-use callback tokens
 - **D1** — scans, assets, findings, events
 - **R2** — raw tool output, SARIF reports
@@ -26,7 +26,8 @@ OSS reconnaissance and penetration testing platform on Cloudflare Workers.
 ```bash
 yarn install
 cp .dev.vars.example .dev.vars   # fill in secrets
-yarn dev                         # local wrangler dev
+yarn dev                         # Astro dev server (dashboard shell only)
+yarn build && npx wrangler dev   # full stack: Hono API + built dashboard
 yarn test                        # vitest (node + workers projects)
 npx tsc --noEmit                 # typecheck
 ```
@@ -70,7 +71,7 @@ Tools with `"default": false` (naabu, alterx) only run when explicitly selected 
 
 Two vitest projects:
 - **node** — fast fakes (memory store, mock fetch)
-- **workers** — workerd + real D1/R2/DO bindings
+- **workers** — workerd + real D1/R2/DO bindings, and the real Astro build in `./dist` through the `ASSETS` binding (built on demand when absent)
 
 The scan-store contract runs in both. A fake that drifts from D1 fails the workers project.
 

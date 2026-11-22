@@ -1,45 +1,37 @@
-import { isAuthorized } from "./auth";
+// Worker entry. Routing: /health and /api/* go to Hono (the API lives in
+// src/server/api.ts); every other path falls through to the Astro static
+// build in ./dist, bound as ASSETS. See astro.config.mjs for why there is no
+// Cloudflare adapter and src/security-headers.ts for the headers stamped on
+// every response, static ones included.
+import { Hono } from "hono";
 import type { Env } from "./env";
-import { handleCallback } from "./handlers/callback";
-import { handleAssets, handleCancelScan, handleCreateScan, handleGetScan, handleListScans } from "./handlers/scans";
 import { json, jsonError } from "./http";
 import { d1ScanStore } from "./scan-store";
 import { withSecurityHeaders } from "./security-headers";
+import { createApiApp } from "./server/api";
 
 export { ScanCoordinator } from "./scan-coordinator";
 
-async function route(request: Request, env: Env): Promise<Response> {
-  const { pathname } = new URL(request.url);
-  const method = request.method;
+const app = new Hono<{ Bindings: Env }>({ strict: false });
+app.get("/health", () => json({ ok: true }, 202));
+app.route("/api", createApiApp((c) => d1ScanStore(c.env.AEGIS_DB)));
+app.notFound(() => jsonError("Not found", 404));
 
-  if (pathname === "/health") return json({ ok: true }, 202);
-
-  if (pathname.startsWith("/api/")) {
-    const store = d1ScanStore(env.AEGIS_DB);
-
-    const cbMatch = pathname.match(/^\/api\/executors\/callback\/([0-9a-f]{32})$/);
-    if (cbMatch && method === "POST") return handleCallback(request, env, store, cbMatch[1]!);
-
-    if (!(await isAuthorized(request, env.AEGIS_API_KEY))) return jsonError("Unauthorized", 401);
-
-    if (method === "POST" && pathname === "/api/scans") return handleCreateScan(request, env, store);
-    if (method === "GET" && pathname === "/api/scans") return handleListScans(env, store);
-
-    const scanMatch = pathname.match(/^\/api\/scans\/([0-9a-f]{32})(\/assets|\/cancel)?$/);
-    if (scanMatch) {
-      const [, id, sub] = scanMatch;
-      if (method === "GET" && !sub) return handleGetScan(env, store, id!);
-      if (method === "GET" && sub === "/assets") return handleAssets(env, store, id!);
-      if (method === "POST" && sub === "/cancel") return handleCancelScan(request, env, store, id!);
-    }
-    return jsonError("Not found", 404);
-  }
-
-  return env.ASSETS.fetch(request);
+/**
+ * Paths the Worker interprets. Everything else (/, /_astro/*, 404.html, ...)
+ * is Astro output and must reach ASSETS untouched. Keep this list narrow:
+ * widening it would route hashed CSS/JS through Hono, which answers JSON.
+ */
+export function isAppRoute(pathname: string): boolean {
+  return pathname === "/health" || pathname === "/api" || pathname.startsWith("/api/");
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return withSecurityHeaders(await route(request, env));
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+    const { pathname } = new URL(request.url);
+    const response = isAppRoute(pathname)
+      ? await app.fetch(request, env, ctx)
+      : await env.ASSETS.fetch(request);
+    return withSecurityHeaders(response);
   },
 } satisfies ExportedHandler<Env>;

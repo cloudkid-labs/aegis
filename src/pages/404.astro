@@ -1,0 +1,22 @@
+---
+// Static 404 page. Astro emits dist/404.html from this file, which the ASSETS
+// router's not_found_handling "404-page" serves for unknown non-API paths
+// with a real 404 status.
+import "../styles/aegis.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>404 — Aegis</title>
+  </head>
+  <body>
+    <main>
+      <h1>404</h1>
+      <p>Not found. <a href="/">Back to Aegis</a></p>
+    </main>
+  </body>
+</html>

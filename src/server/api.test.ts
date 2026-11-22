@@ -1,0 +1,211 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Env } from "../env";
+import type { ScanStore } from "../scan-store";
+import { memoryScanStore } from "../test-support/memory-store";
+import type { ScanRecord } from "../types";
+import { createApiApp } from "./api";
+
+const KEY = "test-key";
+const auth = { authorization: `Bearer ${KEY}` };
+
+interface Harness {
+  env: Env;
+  store: ScanStore;
+  /** Durable Object routes hit, e.g. "/start" or "/consume". */
+  doCalls: string[];
+  /** GitHub workflow dispatch bodies, captured from the stubbed global fetch. */
+  dispatches: { url: string; body: { inputs: Record<string, string> } }[];
+}
+
+/**
+ * Fake bindings for the node project. The Durable Object answers /start with
+ * 200 and rejects every /consume token, which is all the API layer needs to
+ * prove it delegated (the real DO logic is pinned in
+ * src/scan-coordinator.workers.test.ts) and that the callback route is not
+ * behind the bearer gate.
+ */
+function harness(overrides: Partial<Env> = {}): Harness {
+  const doCalls: string[] = [];
+  const dispatches: Harness["dispatches"] = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    dispatches.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+    return new Response(null, { status: 204 });
+  });
+  const env = {
+    AEGIS_API_KEY: KEY,
+    AEGIS_ORIGIN: "https://aegis.test",
+    CALLBACK_SECRET: "test-callback-secret",
+    GITHUB_TOKEN: "test-github-token",
+    GITHUB_OWNER: "rainiersvn",
+    GITHUB_REPO: "aegis",
+    GITHUB_WORKFLOW: "aegis-explore.yml",
+    SCAN_LIMITER: { limit: async () => ({ success: true }) },
+    SCAN_COORDINATOR: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async (input: RequestInfo | URL) => {
+          const path = new URL(String(input)).pathname;
+          doCalls.push(path);
+          return new Response(null, { status: path === "/consume" ? 401 : 200 });
+        },
+      }),
+    },
+    ...overrides,
+  } as unknown as Env;
+  return { env, store: memoryScanStore(), doCalls, dispatches };
+}
+
+function seed(store: ScanStore, id: string, status: ScanRecord["status"] = "queued"): Promise<void> {
+  const now = new Date().toISOString();
+  return store.create({
+    id, target: "https://example.com/", phase: "explore", status, parentScanId: null,
+    executor: "github", externalUrl: null, createdAt: now, updatedAt: now,
+    completedAt: null, error: null, options: null,
+  });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("createApiApp", () => {
+  it("rejects the scan routes without a bearer key", async () => {
+    const { env, store } = harness();
+    const app = createApiApp(() => store);
+
+    for (const [method, path] of [
+      ["GET", "/scans"],
+      ["POST", "/scans"],
+      ["GET", "/scans/0123456789abcdef0123456789abcdef"],
+      ["POST", "/scans/0123456789abcdef0123456789abcdef/cancel"],
+    ] as const) {
+      const res = await app.request(path, { method, headers: { "content-type": "application/json" } }, env);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "Unauthorized" });
+    }
+  });
+
+  it("lists scans for an authorized caller", async () => {
+    const { env, store } = harness();
+    await seed(store, "0123456789abcdef0123456789abcdef");
+    const app = createApiApp(() => store);
+
+    const res = await app.request("/scans", { headers: auth }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scans: ScanRecord[] };
+    expect(body.scans.map((s) => s.id)).toEqual(["0123456789abcdef0123456789abcdef"]);
+  });
+
+  it("creates a scan, starts the Durable Object and dispatches the workflow", async () => {
+    const { env, store, doCalls, dispatches } = harness();
+    const app = createApiApp(() => store);
+
+    const res = await app.request("/scans", {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ target: "https://example.com", phase: "explore", options: { depth: 3, tools: ["subfinder"] } }),
+    }, env);
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; status: string };
+    expect(body.id).toMatch(/^[0-9a-f]{32}$/);
+    expect(body.status).toBe("running");
+
+    const rec = await store.get(body.id);
+    expect(rec?.target).toBe("https://example.com/");
+    expect(rec?.status).toBe("running");
+    expect(rec?.externalUrl).toContain("github.com");
+
+    expect(doCalls).toEqual(["/start"]);
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]!.body.inputs.callback_url).toBe(`https://aegis.test/api/executors/callback/${body.id}`);
+    expect(dispatches[0]!.body.inputs.tools).toBe('["subfinder"]');
+
+    const events = await store.events(body.id);
+    expect(events.map((e) => e.event)).toEqual(["created", "dispatched"]);
+  });
+
+  it("rejects a disallowed target before touching the executor", async () => {
+    const { env, store, doCalls } = harness();
+    const app = createApiApp(() => store);
+
+    const res = await app.request("/scans", {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ target: "http://127.0.0.1:8080", phase: "explore" }),
+    }, env);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid or disallowed target URL" });
+    expect(doCalls).toEqual([]);
+    expect(await store.list(10)).toEqual([]);
+  });
+
+  it("returns 429 when the rate limiter refuses", async () => {
+    const { env, store } = harness({ SCAN_LIMITER: { limit: async () => ({ success: false }) } as unknown as RateLimit });
+    const app = createApiApp(() => store);
+
+    const res = await app.request("/scans", {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ target: "https://example.com" }),
+    }, env);
+    expect(res.status).toBe(429);
+  });
+
+  it("returns a scan with its events", async () => {
+    const { env, store } = harness();
+    const id = "0123456789abcdef0123456789abcdef";
+    await seed(store, id, "running");
+    await store.addEvent(id, "created", "explore:subfinder");
+    const app = createApiApp(() => store);
+
+    const res = await app.request(`/scans/${id}`, { headers: auth }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scan: ScanRecord; events: { event: string }[] };
+    expect(body.scan.id).toBe(id);
+    expect(body.events.map((e) => e.event)).toEqual(["created"]);
+
+    const missing = await app.request(`/scans/${"0".repeat(32)}`, { headers: auth }, env);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: "Scan not found" });
+  });
+
+  it("serves the callback route without the bearer key and delegates the token to the DO", async () => {
+    const { env, store, doCalls } = harness();
+    const id = "0123456789abcdef0123456789abcdef";
+    await seed(store, id);
+    const app = createApiApp(() => store);
+
+    const res = await app.request(`/executors/callback/${id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ artifacts: [] }),
+    }, env);
+
+    // "Invalid callback token" proves the bearer gate was skipped: an
+    // unauthorized scan route answers {error:"Unauthorized"} instead.
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Invalid callback token" });
+    expect(doCalls).toEqual(["/consume"]);
+  });
+
+  it("does not route a malformed scan id", async () => {
+    const { env, store } = harness();
+    const app = createApiApp(() => store);
+
+    for (const path of ["/scans/not-a-scan", "/scans/0123", `/scans/${"A".repeat(32)}`]) {
+      const res = await app.request(path, { headers: auth }, env);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "Not found" });
+    }
+  });
+
+  it("answers unknown API paths with JSON", async () => {
+    const { env, store } = harness();
+    const app = createApiApp(() => store);
+    const res = await app.request("/nope", { headers: auth }, env);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("application/json");
+  });
+});
