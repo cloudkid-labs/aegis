@@ -16,7 +16,9 @@ describe("Astro static output via ASSETS", () => {
     const res = await SELF.fetch("https://aegis.test/");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
-    expect(await res.text()).toContain("<h1>Aegis</h1>");
+    // Astro scopes elements with data-astro-cid-* when the page carries an
+    // inline <style>, so match the h1 tolerantly rather than a literal tag.
+    expect(await res.text()).toMatch(/<h1[^>]*>Aegis<\/h1>/);
   });
 
   it("emits no inline style or script blocks (CSP allows 'self' only)", async () => {
