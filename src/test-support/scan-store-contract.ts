@@ -1,0 +1,189 @@
+import { describe, expect, it } from "vitest";
+import type { ScanStore } from "../scan-store";
+import type { Asset, Finding, ScanRecord } from "../types";
+
+/**
+ * One spec, run against the memory fake (node project) and against real D1
+ * (workers project). Assert only what holds in both: the fake is held to D1,
+ * not the other way round.
+ *
+ * Every test uses its own ids and either a scan-scoped read or a filtered view
+ * of `list`, because the D1 project shares one database across the file.
+ */
+
+function rec(id: string, overrides: Partial<ScanRecord> = {}): ScanRecord {
+  const now = "2026-11-22T00:00:00.000Z";
+  return {
+    id,
+    target: "https://example.com",
+    phase: "explore",
+    status: "queued",
+    parentScanId: null,
+    executor: "github",
+    externalUrl: null,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: null,
+    error: null,
+    options: null,
+    ...overrides,
+  };
+}
+
+function asset(id: string, scanId: string, overrides: Partial<Asset> = {}): Asset {
+  return {
+    id,
+    scanId,
+    type: "subdomain",
+    value: `${id}.example.com`,
+    metadata: null,
+    createdAt: "2026-11-22T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function finding(id: string, scanId: string): Finding {
+  return {
+    id,
+    scanId,
+    tool: "nuclei",
+    severity: "high",
+    confidence: "high",
+    title: "Test finding",
+    description: "d",
+    url: "https://example.com/x",
+    parameter: null,
+    evidence: null,
+    cwe: 79,
+    remediation: null,
+    rawRef: "raw/nuclei.sarif",
+    createdAt: "2026-11-22T00:00:00.000Z",
+  };
+}
+
+export function describeScanStoreContract(label: string, make: () => ScanStore): void {
+  describe(`ScanStore contract (${label})`, () => {
+    it("create + get roundtrip preserves every field", async () => {
+      const store = make();
+      const record = rec("roundtrip", {
+        phase: "invasion",
+        parentScanId: "parent-scan",
+        status: "running",
+        executor: "selfhosted",
+        externalUrl: "https://github.com/o/r/actions/runs/1",
+        completedAt: null,
+        error: null,
+        options: '{"depth":2,"severity":"high"}',
+      });
+      await store.create(record);
+      expect(await store.get("roundtrip")).toEqual(record);
+      expect(await store.get("does-not-exist")).toBeNull();
+    });
+
+    it("list returns newest first", async () => {
+      const store = make();
+      await store.create(rec("list-old", { createdAt: "2026-11-20T00:00:00.000Z" }));
+      await store.create(rec("list-new", { createdAt: "2026-11-21T00:00:00.000Z" }));
+      const rows = await store.list(1000);
+      expect(rows.filter((r) => r.id === "list-old" || r.id === "list-new").map((r) => r.id))
+        .toEqual(["list-new", "list-old"]);
+    });
+
+    it("list honours a zero limit", async () => {
+      const store = make();
+      expect(await store.list(0)).toEqual([]);
+    });
+
+    it("setStatus applies patch fields", async () => {
+      const store = make();
+      await store.create(rec("status"));
+      await store.setStatus("status", "completed", {
+        completedAt: "2026-11-22T01:00:00.000Z",
+        externalUrl: "https://github.com/o/r/actions/runs/2",
+      });
+      const got = (await store.get("status"))!;
+      expect(got.status).toBe("completed");
+      expect(got.completedAt).toBe("2026-11-22T01:00:00.000Z");
+      expect(got.externalUrl).toBe("https://github.com/o/r/actions/runs/2");
+    });
+
+    it("setStatus on a missing scan is a no-op", async () => {
+      const store = make();
+      await store.setStatus("missing", "failed", { error: "boom" });
+      expect(await store.get("missing")).toBeNull();
+    });
+
+    it("claimOldest claims the oldest queued scan for one executor only", async () => {
+      const store = make();
+      const now = "2026-11-22T02:00:00.000Z";
+      await store.create(rec("claim-gh", { executor: "github", createdAt: "2026-11-20T00:00:00.000Z" }));
+      await store.create(rec("claim-sh1", { executor: "selfhosted", createdAt: "2026-11-21T00:00:00.000Z" }));
+      await store.create(rec("claim-sh2", { executor: "selfhosted", createdAt: "2026-11-22T00:00:00.000Z" }));
+
+      const first = await store.claimOldest("selfhosted", now);
+      expect(first).not.toBeNull();
+      expect(first!.id).toBe("claim-sh1");
+      expect(first!.status).toBe("running");
+      expect(first!.updatedAt).toBe(now);
+
+      const second = await store.claimOldest("selfhosted", now);
+      expect(second!.id).toBe("claim-sh2");
+
+      expect(await store.claimOldest("selfhosted", now)).toBeNull();
+      expect((await store.get("claim-gh"))!.status).toBe("queued");
+    });
+
+    it("insertAssets stores assets scoped to a scan and is idempotent on id", async () => {
+      const store = make();
+      await store.create(rec("assets-a"));
+      await store.create(rec("assets-b"));
+
+      await store.insertAssets([
+        asset("a2", "assets-a", { createdAt: "2026-11-22T00:00:02.000Z", type: "url", value: "https://example.com/x", metadata: '{"status_code":200}' }),
+        asset("a1", "assets-a", { createdAt: "2026-11-22T00:00:01.000Z" }),
+        asset("b1", "assets-b"),
+      ]);
+
+      const assetsA = await store.listAssets("assets-a");
+      expect(assetsA.map((a) => a.id)).toEqual(["a1", "a2"]);
+      expect(assetsA[1]!.type).toBe("url");
+      expect(assetsA[1]!.metadata).toBe('{"status_code":200}');
+      expect((await store.listAssets("assets-b")).map((a) => a.id)).toEqual(["b1"]);
+
+      await store.insertAssets([asset("a1", "assets-a", { createdAt: "2026-11-22T00:00:01.000Z" })]);
+      expect((await store.listAssets("assets-a")).length).toBe(2);
+      expect(await store.listAssets("assets-missing")).toEqual([]);
+    });
+
+    it("insertFindings is scoped to a scan and idempotent on id", async () => {
+      const store = make();
+      await store.create(rec("findings-a"));
+      await store.create(rec("findings-b"));
+
+      await store.insertFindings([
+        finding("f1", "findings-a"),
+        finding("f2", "findings-a"),
+        finding("f3", "findings-b"),
+      ]);
+      expect((await store.listFindings("findings-a")).map((f) => f.id).sort()).toEqual(["f1", "f2"]);
+      expect((await store.listFindings("findings-b")).map((f) => f.id)).toEqual(["f3"]);
+
+      await store.insertFindings([finding("f1", "findings-a")]);
+      expect((await store.listFindings("findings-a")).length).toBe(2);
+      expect(await store.listFindings("findings-missing")).toEqual([]);
+    });
+
+    it("events append in insertion order", async () => {
+      const store = make();
+      await store.create(rec("events"));
+      await store.addEvent("events", "created");
+      await store.addEvent("events", "dispatched", "run-1");
+
+      const events = await store.events("events");
+      expect(events.map((e) => e.event)).toEqual(["created", "dispatched"]);
+      expect(events[0]!.detail).toBeNull();
+      expect(events[1]!.detail).toBe("run-1");
+      expect(await store.events("events-missing")).toEqual([]);
+    });
+  });
+}

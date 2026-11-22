@@ -1,0 +1,35 @@
+name: Deploy Aegis
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "tools.json"
+      - "migrations/**"
+      - "wrangler.jsonc"
+      - ".github/workflows/deploy-aegis.yaml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: yarn install --frozen-lockfile
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply AEGIS_DB --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Health check
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://aegis.cloudkid.link/health)
+          if [ "$code" != "202" ] && [ "$code" != "403" ]; then echo "health $code"; exit 1; fi

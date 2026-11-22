@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aegis — Recon &amp; Pentest</title>
+  <link rel="stylesheet" href="/aegis.css">
+</head>
+<body>
+  <header>
+    <h1>Aegis</h1>
+    <form id="key-form">
+      <input id="api-key" type="password" placeholder="API key" autocomplete="off">
+      <button type="submit">Save</button>
+    </form>
+  </header>
+  <main>
+    <section id="create-section">
+      <h2>New Explore Scan</h2>
+      <form id="create-form">
+        <input id="target" type="url" placeholder="https://target.example" required>
+        <label>Depth <input id="depth" type="number" value="2" min="1" max="5"></label>
+        <fieldset id="tool-toggles">
+          <legend>Tools</legend>
+          <label><input type="checkbox" name="tool" value="subfinder" checked> subfinder</label>
+          <label><input type="checkbox" name="tool" value="dnsx" checked> dnsx</label>
+          <label><input type="checkbox" name="tool" value="httpx" checked> httpx</label>
+          <label><input type="checkbox" name="tool" value="katana" checked> katana</label>
+          <label><input type="checkbox" name="tool" value="naabu"> naabu</label>
+          <label><input type="checkbox" name="tool" value="alterx"> alterx</label>
+        </fieldset>
+        <button type="submit">Start Explore</button>
+      </form>
+      <p id="create-status" role="status"></p>
+    </section>
+    <section id="list-section">
+      <h2>History</h2>
+      <div id="filters">
+        <select id="filter-phase"><option value="">All phases</option><option value="explore">Explore</option><option value="invasion">Invasion</option></select>
+        <select id="filter-status"><option value="">All statuses</option><option value="completed">Completed</option><option value="running">Running</option><option value="failed">Failed</option></select>
+      </div>
+      <table id="scans-table">
+        <thead><tr><th>ID</th><th>Target</th><th>Phase</th><th>Status</th><th>Assets</th><th>Created</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+    <section id="detail-section" hidden>
+      <h2 id="detail-title">Scan</h2>
+      <button id="back-btn">Back</button>
+      <button id="invade-btn" disabled>Invoke Invasion (Phase 2)</button>
+      <div id="detail-meta"></div>
+      <h3>Discovered Assets</h3>
+      <table id="assets-table">
+        <thead><tr><th>Type</th><th>Value</th><th>Metadata</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

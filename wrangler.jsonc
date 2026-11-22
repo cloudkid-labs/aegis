@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aegis",
+  "main": "./src/index.ts",
+  // Capped: @cloudflare/vitest-pool-workers 0.23.0 bundles a workerd that
+  // refuses a compatibility date past this one.
+  "compatibility_date": "2026-08-22",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "SCAN_COORDINATOR", "class_name": "ScanCoordinator" }]
+  },
+  "migrations": [{ "tag": "scan-coordinator-v1", "new_sqlite_classes": ["ScanCoordinator"] }],
+  "routes": [{ "pattern": "aegis.cloudkid.link", "custom_domain": true }],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Array, not true: only these paths reach the Worker. Everything else is
+    // answered by the assets router (dashboard at /, 404-page for misses).
+    "run_worker_first": ["/api/*", "/health", "/health/*"],
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "vars": {
+    "GITHUB_OWNER": "rainiersvn",
+    "GITHUB_REPO": "aegis",
+    "GITHUB_WORKFLOW": "aegis-explore.yml",
+    "AEGIS_ORIGIN": "https://aegis.cloudkid.link"
+  },
+  "d1_databases": [
+    { "binding": "AEGIS_DB", "database_name": "aegis", "database_id": "REPLACE_AFTER_D1_CREATE" }
+  ],
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "aegis-artifacts" }],
+  // The Workers rate-limit binding only supports 10s or 60s windows (wrangler
+  // rejects anything else), so a true 10-per-hour cap is NOT expressible here.
+  // This is the closest valid binding: the same limit in the longest window.
+  // An hourly cap needs a D1-backed count in the scan-create handler.
+  "ratelimits": [
+    { "name": "SCAN_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }
+  ]
+}

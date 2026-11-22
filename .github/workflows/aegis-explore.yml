@@ -1,0 +1,94 @@
+name: Aegis Explore
+on:
+  workflow_dispatch:
+    inputs:
+      scan_id: { required: true, type: string }
+      target_url: { required: true, type: string }
+      phase: { required: true, type: string }
+      tools: { required: true, type: string }
+      callback_url: { required: true, type: string }
+      callback_token: { required: true, type: string }
+      timeout_seconds: { required: false, type: string, default: "900" }
+      options: { required: false, type: string, default: "{}" }
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mask callback token
+        run: echo "::add-mask::${{ inputs.callback_token }}"
+
+      - name: Checkout registry
+        uses: actions/checkout@v4
+
+      - name: Run explore tools
+        run: |
+          mkdir -p /tmp/aegis-out
+          TARGET="${{ inputs.target_url }}"
+          HOST=$(echo "$TARGET" | sed -E 's|https?://||' | sed 's|/.*||' | sed 's|:.*||')
+          DEPTH=$(echo '${{ inputs.options }}' | jq -r '.depth // 2')
+          TOOLS='${{ inputs.tools }}'
+
+          run_tool() {
+            local name="$1" image="$2"; shift 2
+            echo "=== Running $name ==="
+            docker run --rm -v /tmp/aegis-out:/out "$image" "$@" || true
+          }
+
+          if echo "$TOOLS" | jq -e 'index("subfinder")' > /dev/null 2>&1; then
+            run_tool subfinder projectdiscovery/subfinder:v2.17.0 -d "$HOST" -json -o /out/subfinder.json -silent
+          fi
+          if echo "$TOOLS" | jq -e 'index("dnsx")' > /dev/null 2>&1; then
+            run_tool dnsx projectdiscovery/dnsx:v1.2.2 -d "$HOST" -json -o /out/dnsx.json -silent
+          fi
+          if echo "$TOOLS" | jq -e 'index("httpx")' > /dev/null 2>&1; then
+            run_tool httpx projectdiscovery/httpx:v1.12.0 -u "$TARGET" -json -o /out/httpx.json -title -tech-detect -status-code -silent
+          fi
+          if echo "$TOOLS" | jq -e 'index("katana")' > /dev/null 2>&1; then
+            run_tool katana projectdiscovery/katana:v1.8.0 -u "$TARGET" -jsonl -o /out/katana.jsonl -d "$DEPTH" -silent
+          fi
+          if echo "$TOOLS" | jq -e 'index("naabu")' > /dev/null 2>&1; then
+            run_tool naabu projectdiscovery/naabu:v2.3.3 -host "$HOST" -json -o /out/naabu.json -silent
+          fi
+          if echo "$TOOLS" | jq -e 'index("alterx")' > /dev/null 2>&1; then
+            run_tool alterx projectdiscovery/alterx:v0.2.0 -d "$HOST" -o /out/alterx.txt
+          fi
+
+      - name: Post results to Aegis
+        run: |
+          node -e '
+            const fs = require("fs");
+            const dir = "/tmp/aegis-out";
+            const artifacts = [];
+            const files = [
+              { name: "subfinder", file: "subfinder.json", format: "json" },
+              { name: "dnsx", file: "dnsx.json", format: "json" },
+              { name: "httpx", file: "httpx.json", format: "json" },
+              { name: "katana", file: "katana.jsonl", format: "jsonl" },
+              { name: "naabu", file: "naabu.json", format: "json" },
+              { name: "alterx", file: "alterx.txt", format: "text" },
+            ];
+            for (const f of files) {
+              const p = `${dir}/${f.file}`;
+              if (fs.existsSync(p)) {
+                const raw = fs.readFileSync(p, "utf8");
+                let data;
+                if (f.format === "text") { data = raw; }
+                else {
+                  data = raw.split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+                }
+                artifacts.push({ tool: f.name, format: f.format, data });
+              }
+            }
+            const body = JSON.stringify({ artifacts });
+            fetch(process.env.CB_URL, {
+              method: "POST",
+              headers: { authorization: "Bearer " + process.env.CB_TOKEN, "content-type": "application/json" },
+              body,
+            }).then(r => { console.log("callback", r.status); if (!r.ok) process.exit(1); })
+              .catch(e => { console.error(e); process.exit(1); });
+          '
+        env:
+          CB_URL: ${{ inputs.callback_url }}
+          CB_TOKEN: ${{ inputs.callback_token }}

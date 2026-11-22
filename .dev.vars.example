@@ -1,0 +1,4 @@
+AEGIS_API_KEY=dev-api-key-change-me
+EXECUTOR_TOKEN=dev-executor-token-change-me
+CALLBACK_SECRET=dev-callback-secret-change-me
+GITHUB_TOKEN=ghp_your_token_here
