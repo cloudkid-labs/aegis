@@ -27,7 +27,12 @@
     "GITHUB_OWNER": "rainiersvn",
     "GITHUB_REPO": "aegis",
     "GITHUB_WORKFLOW": "aegis-explore.yml",
-    "AEGIS_ORIGIN": "https://aegis.cloudkid.link"
+    "AEGIS_ORIGIN": "https://aegis.cloudkid.link",
+    // Google sign-in. CLIENT_ID is public; the secret lives in wrangler
+    // secrets (GOOGLE_CLIENT_SECRET). An empty allowlist admits no one, so
+    // sign-in is locked until the owner sets both the client id and emails.
+    "GOOGLE_CLIENT_ID": "",
+    "AEGIS_ALLOWED_EMAILS": ""
   },
   "d1_databases": [
     { "binding": "AEGIS_DB", "database_name": "aegis", "database_id": "REPLACE_AFTER_D1_CREATE" }

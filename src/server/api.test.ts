@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sha256Hex } from "../auth";
 import type { Env } from "../env";
 import type { ScanStore } from "../scan-store";
+import { SESSION_COOKIE } from "../session";
+import { memorySessionStore } from "../session-store";
 import { memoryScanStore } from "../test-support/memory-store";
 import type { ScanRecord } from "../types";
 import { createApiApp } from "./api";
@@ -207,5 +210,38 @@ describe("createApiApp", () => {
     const res = await app.request("/nope", { headers: auth }, env);
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toContain("application/json");
+  });
+});
+
+describe("operator gate: session or bearer", () => {
+  async function sessionCookie(email = "operator@example.com", ttl = 100_000): Promise<{ store: ReturnType<typeof memorySessionStore>; cookie: string }> {
+    const store = memorySessionStore();
+    const token = "C".repeat(43);
+    const now = Date.now();
+    await store.create(await sha256Hex(token), email, now, now + ttl);
+    return { store, cookie: `${SESSION_COOKIE}=${token}` };
+  }
+
+  it("admits a valid login session without a bearer key", async () => {
+    const { env, store } = harness();
+    const { store: sessions, cookie } = await sessionCookie();
+    const app = createApiApp(() => store, () => sessions);
+    const res = await app.request("/scans", { headers: { cookie } }, env);
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an expired session when no bearer key is present", async () => {
+    const { env, store } = harness();
+    const { store: sessions, cookie } = await sessionCookie("operator@example.com", -1);
+    const app = createApiApp(() => store, () => sessions);
+    const res = await app.request("/scans", { headers: { cookie } }, env);
+    expect(res.status).toBe(401);
+  });
+
+  it("still admits the bearer key for automation (no session)", async () => {
+    const { env, store } = harness();
+    const app = createApiApp(() => store, () => memorySessionStore());
+    const res = await app.request("/scans", { headers: auth }, env);
+    expect(res.status).toBe(200);
   });
 });

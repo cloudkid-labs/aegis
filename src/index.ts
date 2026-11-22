@@ -5,16 +5,26 @@
 // every response, static ones included.
 import { Hono } from "hono";
 import type { Env } from "./env";
+import { handleGoogleCallback, handleGoogleStart, handleLogout, handleMe } from "./google-oidc";
 import { json, jsonError } from "./http";
 import { d1ScanStore } from "./scan-store";
 import { withSecurityHeaders } from "./security-headers";
 import { createApiApp } from "./server/api";
+import { d1SessionStore } from "./session-store";
 
 export { ScanCoordinator } from "./scan-coordinator";
 
 const app = new Hono<{ Bindings: Env }>({ strict: false });
 app.get("/health", () => json({ ok: true }, 202));
 app.route("/api", createApiApp((c) => d1ScanStore(c.env.AEGIS_DB)));
+
+// Google sign-in. Outside the operator gate: these establish or report the
+// session itself. /auth/me is public so the shell can render sign-in state.
+app.get("/auth/google/start", (c) => handleGoogleStart(c.req.raw, c.env));
+app.get("/auth/google/callback", (c) => handleGoogleCallback(c.req.raw, c.env, d1SessionStore(c.env.AEGIS_DB)));
+app.get("/auth/logout", (c) => handleLogout(c.req.raw, d1SessionStore(c.env.AEGIS_DB)));
+app.get("/auth/me", (c) => handleMe(c.req.raw, d1SessionStore(c.env.AEGIS_DB)));
+
 app.notFound(() => jsonError("Not found", 404));
 
 /**
@@ -23,7 +33,12 @@ app.notFound(() => jsonError("Not found", 404));
  * widening it would route hashed CSS/JS through Hono, which answers JSON.
  */
 export function isAppRoute(pathname: string): boolean {
-  return pathname === "/health" || pathname === "/api" || pathname.startsWith("/api/");
+  return (
+    pathname === "/health" ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/auth/")
+  );
 }
 
 export default {

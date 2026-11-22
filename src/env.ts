@@ -19,4 +19,7 @@ export interface Env {
   GITHUB_REPO: string;
   GITHUB_WORKFLOW: string;
   AEGIS_ORIGIN: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
+  AEGIS_ALLOWED_EMAILS: string;
 }

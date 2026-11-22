@@ -2,3 +2,8 @@ AEGIS_API_KEY=dev-api-key-change-me
 EXECUTOR_TOKEN=dev-executor-token-change-me
 CALLBACK_SECRET=dev-callback-secret-change-me
 GITHUB_TOKEN=ghp_your_token_here
+# Google sign-in (dashboard). CLIENT_ID is also a wrangler var; the secret is
+# wrangler-secret-only in production. Empty allowlist = sign-in locked.
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+AEGIS_ALLOWED_EMAILS=you@example.com
