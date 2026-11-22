@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sha256Hex } from "./auth";
 import { normalize, hasNormalizer } from "./normalizers/index";
 import { normalizeSubfinder, normalizeHttpx, normalizeKatana, normalizeDnsx, normalizeNaabu, normalizeAlterx } from "./normalizers/explore";
 
@@ -72,6 +73,18 @@ describe("explore normalizers", () => {
     const assets = await normalizeKatana(data, SCAN, NOW);
     expect(assets.length).toBe(2);
     expect(assets[0]!.id).not.toBe(assets[1]!.id);
+  });
+
+  it("id namespace is independent of displayed type (dnsx=dns, naabu=port)", async () => {
+    // The record factory keeps idKind separate from type on purpose: folding
+    // them would re-key every dnsx/naabu asset and break dedup against history.
+    const dnsx = await normalizeDnsx([{ host: "api.example.com" }], SCAN, NOW);
+    expect(dnsx[0]!.type).toBe("subdomain");
+    expect(dnsx[0]!.id).toBe((await sha256Hex(`${SCAN}|dns|api.example.com`)).slice(0, 32));
+
+    const naabu = await normalizeNaabu([{ host: "example.com", port: 8443 }], SCAN, NOW);
+    expect(naabu[0]!.type).toBe("endpoint");
+    expect(naabu[0]!.id).toBe((await sha256Hex(`${SCAN}|port|example.com:8443`)).slice(0, 32));
   });
 });
 
