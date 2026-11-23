@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getTool, loadRegistry, parseRegistry, toolsForPhase } from "./registry";
 
 const EXPLORE = ["subfinder", "dnsx", "alterx", "httpx", "katana", "naabu"];
-const INVASION = ["nuclei", "zap-baseline"];
+const INVASION = ["nuclei", "zap-baseline", "zap-full"];
 
 function base(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -83,6 +83,37 @@ describe("getTool", () => {
     expect(getTool("does-not-exist")).toBeNull();
     expect(getTool("__proto__")).toBeNull();
     expect(getTool("")).toBeNull();
+  });
+});
+
+describe("invasion tool configuration", () => {
+  it("nuclei probes the selected URL list and emits JSONL findings", () => {
+    const nuclei = getTool("nuclei")!;
+    // -l {{urls}}: the executor writes one selected URL per line; ZAP gets a
+    // single entry point instead, so the two ingress shapes never drift.
+    expect(nuclei.args).toEqual(["-l", "{{urls}}", "-severity", "{{severity}}", "-jsonl", "-o", "/out/nuclei.jsonl", "-no-color"]);
+    expect(nuclei.outputFormat).toBe("jsonl");
+    expect(nuclei.outputType).toBe("findings");
+    expect(nuclei.normalizer).toBe("nuclei-jsonl");
+  });
+
+  it("zap-full is the opt-in active profile with its own output file", () => {
+    const full = getTool("zap-full")!;
+    expect(full.phase).toBe("invasion");
+    expect(full.image).toBe("ghcr.io/zaproxy/zaproxy:stable");
+    expect(full.args).toEqual(["zap-full-scan.py", "-t", "{{target}}", "-J", "/out/zap-full.json"]);
+    expect(full.outputFormat).toBe("json");
+    expect(full.outputType).toBe("findings");
+    expect(full.normalizer).toBe("zap-json");
+    expect(full.default).toBe(false);
+  });
+
+  it("zap-baseline stays enabled alongside nuclei; zap-full is the only opt-in", () => {
+    const baseline = getTool("zap-baseline")!;
+    expect(baseline.normalizer).toBe("zap-json");
+    expect(baseline.default).toBeUndefined();
+    const selected = toolsForPhase("invasion").filter((t) => t.default !== false).map((t) => t.name);
+    expect(selected).toEqual(["nuclei", "zap-baseline"]);
   });
 });
 
