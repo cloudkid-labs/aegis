@@ -7,7 +7,7 @@ import { isAuthorized } from "../auth";
 import type { Env } from "../env";
 import { handleCallback } from "../handlers/callback";
 import {
-  handleAssets, handleCancelScan, handleCreateScan, handleGetScan, handleListScans,
+  handleAssets, handleCancelScan, handleCreateScan, handleGetScan, handleListScans, handleRetryScan,
 } from "../handlers/scans";
 import { jsonError } from "../http";
 import type { ScanStore } from "../scan-store";
@@ -55,6 +55,9 @@ export function createApiApp(
   app.get(`/scans/${SCAN_ID}/assets`, (c) => handleAssets(c.env, makeStore(c), c.req.param("scanId")));
   app.post(`/scans/${SCAN_ID}/cancel`, (c) =>
     handleCancelScan(c.req.raw, c.env, makeStore(c), c.req.param("scanId")),
+  );
+  app.post(`/scans/${SCAN_ID}/retry`, (c) =>
+    handleRetryScan(c.req.raw, c.env, makeStore(c), c.req.param("scanId")),
   );
 
   // The API never answers with an HTML or plain-text body: the dashboard

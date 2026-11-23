@@ -62,6 +62,7 @@ OR `Authorization: Bearer <AEGIS_API_KEY>` for headless automation:
 | GET | `/api/scans/:id` | Scan detail + events |
 | GET | `/api/scans/:id/assets` | Discovered assets |
 | POST | `/api/scans/:id/cancel` | Cancel running scan |
+| POST | `/api/scans/:id/retry` | Re-run a failed/cancelled scan as a new linked scan |
 
 Executor callback (own token): `POST /api/executors/callback/:scanId`
 
