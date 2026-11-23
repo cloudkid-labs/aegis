@@ -116,8 +116,8 @@ describe("Astro static output via ASSETS", () => {
     for (const id of ["landing-pipeline", "landing-tooling", "landing-privacy"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    // The honesty line is load-bearing: Explore is shipped, Invasion is not.
-    expect(html).toContain("Explore is live; Invasion lands in Phase 2.");
+    // The honesty line is load-bearing: Explore and Invasion are shipped, Reporting is not.
+    expect(html).toContain("Explore and Invasion are live; Reporting lands in Phase 3.");
     expect(html).toContain('href="https://github.com/projectdiscovery/nuclei"');
     expect(html).toContain('href="https://www.zaproxy.org/"');
   });
