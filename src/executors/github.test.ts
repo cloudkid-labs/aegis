@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { dispatchGitHubWorkflow } from "./github";
 import type { ExecutorStartRequest } from "./types";
 
-const ENV = { GITHUB_TOKEN: "gh-token", GITHUB_OWNER: "rainiersvn", GITHUB_REPO: "aegis", GITHUB_WORKFLOW: "aegis-explore.yml" };
+const ENV = { GITHUB_TOKEN: "gh-token", GITHUB_OWNER: "cloudkid-labs", GITHUB_REPO: "aegis", GITHUB_WORKFLOW: "aegis-explore.yml" };
 
 const REQ: ExecutorStartRequest = {
   scanId: "s1", target: "https://example.com", phase: "explore",
@@ -17,7 +17,7 @@ describe("dispatchGitHubWorkflow", () => {
     const result = await dispatchGitHubWorkflow(ENV, REQ, fetchImpl as unknown as typeof fetch);
     expect(result.externalUrl).toContain("aegis-explore.yml");
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://api.github.com/repos/rainiersvn/aegis/actions/workflows/aegis-explore.yml/dispatches");
+    expect(url).toBe("https://api.github.com/repos/cloudkid-labs/aegis/actions/workflows/aegis-explore.yml/dispatches");
     const body = JSON.parse(init.body as string);
     expect(body.ref).toBe("main");
     expect(body.inputs.scan_id).toBe("s1");
