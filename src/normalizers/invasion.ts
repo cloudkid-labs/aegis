@@ -144,6 +144,17 @@ export async function nucleiFindings(tool: string, data: unknown, scanId: string
   return out;
 }
 
+/**
+ * ZAP report `site[].alerts[]`, flattened to the alert entries. The rule
+ * metadata lives on the alert; the occurrence lives on each `instances[]`
+ * entry beneath it. Per the traditional JSON schema
+ * (https://www.zaproxy.org/docs/desktop/addons/report-generation/report-traditional-json/)
+ * an alert carries pluginid/alertRef/alert/name/riskcode/confidence/riskdesc/
+ * desc/instances/count/solution/otherinfo/reference/cweid/wascid/sourceid,
+ * and each instance carries uri/nodeName/method/param/attack/evidence/
+ * otherinfo. There is no alert.uri: reading one finds nothing and skips every
+ * real alert. Do not flatten these back onto the alert.
+ */
 function zapAlerts(data: unknown): Record<string, unknown>[] {
   const report = typeof data === "string" ? json(data) : data;
   const sites = asRecord(report).site;
@@ -157,28 +168,37 @@ function zapAlerts(data: unknown): Record<string, unknown>[] {
   return alerts;
 }
 
-/** ZAP report `site[].alerts[]`; the tool label comes from the registry entry. */
+/** ZAP report `site[].alerts[]`; one Finding per located instance. The tool
+ *  label comes from the registry entry running the report. */
 export async function zapFindings(tool: string, data: unknown, scanId: string, now: string): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const alert of zapAlerts(data)) {
-    const url = text(alert.uri);
     const title = text(alert.alert) ?? text(alert.name);
-    if (!url || !title) continue;
+    if (!title) continue;
 
-    out.push(await buildFinding(scanId, now, {
-      tool,
-      ruleId: text(alert.pluginid) ?? title,
-      severity: zapSeverity(alert.riskdesc),
-      confidence: zapConfidence(alert.confidence),
-      title,
-      description: typeof alert.desc === "string" ? alert.desc : "",
-      url,
-      // ZAP writes "" for "no parameter" and "no evidence".
-      parameter: text(alert.param),
-      evidence: text(alert.evidence),
-      cwe: parseCwe(alert.cweid),
-      remediation: text(alert.solution),
-    }));
+    const instances = Array.isArray(alert.instances) ? alert.instances.filter(isRecord) : [];
+    for (const instance of instances) {
+      // An instance without a uri has nothing to point the finding at; the
+      // alert's other instances may still be usable.
+      const url = text(instance.uri);
+      if (!url) continue;
+
+      out.push(await buildFinding(scanId, now, {
+        tool,
+        ruleId: text(alert.pluginid) ?? title,
+        severity: zapSeverity(alert.riskdesc),
+        confidence: zapConfidence(alert.confidence),
+        title,
+        description: typeof alert.desc === "string" ? alert.desc : "",
+        url,
+        // ZAP writes "" for "no parameter" and "no evidence"; the attack is
+        // the concrete proof when the instance has no evidence.
+        parameter: text(instance.param),
+        evidence: text(instance.evidence) ?? text(instance.attack),
+        cwe: parseCwe(alert.cweid),
+        remediation: text(alert.solution),
+      }));
+    }
   }
   return out;
 }

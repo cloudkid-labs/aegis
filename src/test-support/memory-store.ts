@@ -87,14 +87,16 @@ export function memoryScanStore(): ScanStore {
       return { ...claimed };
     },
 
-    async claimRetry(id, expectedUpdatedAt, now) {
-      // Mirrors the D1 statement exactly: status gate, then the updated_at
-      // compare-and-swap, writing the new timestamp only on success.
-      const rec = scans.get(id);
-      if (!rec) return false;
-      if (rec.status !== "failed" && rec.status !== "cancelled") return false;
-      if (rec.updatedAt !== expectedUpdatedAt) return false;
-      scans.set(id, { ...rec, updatedAt: now });
+    async createIfNoActiveChild(rec) {
+      // Mirrors the D1 statement: a queued/running child under the same parent
+      // blocks the insert, and a NULL parent never matches (SQL ?5 = NULL is
+      // never true), so only a non-null parent can be blocked.
+      const parent = rec.parentScanId;
+      const blocked = parent !== null && [...scans.values()].some(
+        (scan) => scan.parentScanId === parent && (scan.status === "queued" || scan.status === "running"),
+      );
+      if (blocked) return false;
+      scans.set(rec.id, { ...rec });
       return true;
     },
 

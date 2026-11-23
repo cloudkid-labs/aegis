@@ -22,12 +22,13 @@ export interface ScanStore {
   /** Atomically flip the oldest queued scan for one executor to running. */
   claimOldest(executor: ExecutorName, now: string): Promise<ScanRecord | null>;
   /**
-   * Single-flight guard for retry: claims a failed/cancelled scan for one
-   * caller only. The compare-and-swap is on `updatedAt`, so two requests that
-   * read the same row cannot both proceed; the loser gets false and must
-   * answer 409 instead of creating a second active copy.
+   * Insert a scan only when no sibling under the same `parentScanId` is queued
+   * or running. Check and insert are one statement, so two retries of one scan
+   * cannot both create an active copy even after both read the failed row: the
+   * guard holds for the whole dispatch window, not just the status read.
+   * Returns false when an active child exists and nothing was inserted.
    */
-  claimRetry(id: string, expectedUpdatedAt: string, now: string): Promise<boolean>;
+  createIfNoActiveChild(rec: ScanRecord): Promise<boolean>;
   addEvent(scanId: string, event: string, detail?: string): Promise<void>;
   insertAssets(assets: Asset[]): Promise<void>;
   listAssets(scanId: string): Promise<Asset[]>;
@@ -258,14 +259,23 @@ export function d1ScanStore(db: D1Database): ScanStore {
       return row ? toRecord(row) : null;
     },
 
-    async claimRetry(id, expectedUpdatedAt, now) {
-      // Compare-and-swap on updated_at: only the request that read the row
-      // before any competing retry wrote it can move it forward.
+    async createIfNoActiveChild(rec) {
+      // One statement: the NOT EXISTS check and the insert cannot interleave,
+      // so a competing retry can never slip an active child in between. ?5 is
+      // parent_scan_id, reused by the subquery. A NULL parent never matches
+      // (?5 = NULL is never true), so a parentless record always inserts.
       const res = await db
         .prepare(
-          "UPDATE scans SET updated_at=?3 WHERE id=?1 AND updated_at=?2 AND status IN ('failed','cancelled')",
+          `INSERT INTO scans (${SCAN_COLS})
+           SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12
+            WHERE NOT EXISTS (
+              SELECT 1 FROM scans WHERE parent_scan_id=?5 AND status IN ('queued','running')
+            )`,
         )
-        .bind(id, expectedUpdatedAt, now)
+        .bind(
+          rec.id, rec.target, rec.phase, rec.status, rec.parentScanId, rec.executor,
+          rec.externalUrl, rec.createdAt, rec.updatedAt, rec.completedAt, rec.error, rec.options,
+        )
         .run();
       return (res.meta?.changes ?? 0) > 0;
     },

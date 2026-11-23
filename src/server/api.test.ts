@@ -453,29 +453,36 @@ describe("retry", () => {
     expect(res.status).toBe(201);
   });
 
-  it("refuses a second retry that raced the first", async () => {
-    // Frozen clock: the seed and the claim share one millisecond, the case
-    // where rewriting updated_at with the same value would not move the CAS
-    // token and the second retry would slip through.
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-23T00:00:00.000Z"));
+  it("refuses a second retry while the first copy is queued for dispatch", async () => {
     const { env, store, dispatches } = harness();
     await seed(store, ID, "failed");
-    const stale = (await store.get(ID))!;
-    // Both requests read the row before either could claim it.
-    const racing = {
+    // The copy's queued -> running transition lands only once dispatch
+    // resolves; park it so the window the guard exists for is observable.
+    const notYetRunning = {
       ...store,
-      get: async (scanId: string) => (scanId === ID ? { ...stale } : store.get(scanId)),
+      transition: async (scanId: string, allowed: ScanRecord["status"][], to: ScanRecord["status"]) =>
+        scanId === ID ? store.transition(scanId, allowed, to) : false,
     } as ScanStore;
-    const app = createApiApp(() => racing);
+    const app = createApiApp(() => notYetRunning);
 
     const first = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
     expect(first.status).toBe(201);
+    const copyId = ((await first.json()) as { id: string }).id;
+    expect((await store.get(copyId))!.status).toBe("queued");
 
+    // The queued copy is an active child of the failed scan, so a second
+    // retry cannot fan one failed scan into two active copies.
     const second = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
     expect(second.status).toBe(409);
     expect(await second.json()).toEqual({ error: "Retry already in progress" });
     expect(dispatches).toHaveLength(1);
+
+    // Once the copy is terminal it no longer blocks a new retry.
+    await store.transition(copyId, ["queued"], "failed", { error: "boom" });
+    const third = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(third.status).toBe(201);
+    expect(((await third.json()) as { id: string }).id).not.toBe(copyId);
+    expect(dispatches).toHaveLength(2);
   });
 
   it("refuses to re-run a completed scan", async () => {
@@ -1056,28 +1063,28 @@ describe("invasion retry", () => {
     expect((await store.events(ORIG)).some((e) => e.event === "retried" && e.detail?.includes(body.id) && e.detail.includes("retried by api-key"))).toBe(true);
   });
 
-  it("refuses a second retry of one invasion that read the row before the claim", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-23T00:00:00.000Z"));
+  it("refuses a second retry of one invasion while the first copy is still active", async () => {
     const { env, store, dispatches } = harness();
     await seedParent(store);
     await seedFailedInvasion(store, { targets: [...KEPT], tools: ["nuclei"], active: false });
-    const stale = (await store.get(ORIG))!;
-    const racing = {
-      ...store,
-      get: async (scanId: string) => (scanId === ORIG ? { ...stale } : store.get(scanId)),
-    } as ScanStore;
-    const app = createApiApp(() => racing);
+    const app = createApiApp(() => store);
 
     const first = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
     expect(first.status).toBe(201);
+    const copyId = ((await first.json()) as { id: string }).id;
+    expect((await store.get(copyId))!.status).toBe("running");
 
     const second = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
     expect(second.status).toBe(409);
     expect(await second.json()).toEqual({ error: "Retry already in progress" });
     // One confirmed invasion must never fan out into two active attacks.
     expect(dispatches).toHaveLength(1);
-    expect((await store.list(50)).filter((s) => s.phase === "invasion" && s.id !== ORIG)).toHaveLength(1);
+
+    await store.transition(copyId, ["running"], "failed", { error: "boom" });
+    const third = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
+    expect(third.status).toBe(201);
+    expect(((await third.json()) as { id: string }).id).not.toBe(copyId);
+    expect(dispatches).toHaveLength(2);
   });
 
   it("records the operator who triggered a retry without changing the stored authorization", async () => {

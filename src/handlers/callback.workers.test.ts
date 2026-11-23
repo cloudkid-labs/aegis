@@ -63,17 +63,32 @@ describe("executor callback findings ingestion", () => {
 
     expect(res.status).toBe(200);
     // Counts are of normalized findings; dedupe is the store's job on insert.
-    expect(await res.json()).toEqual({ ok: true, assets: 0, findings: 3 });
+    // The ZAP report carries three instances across its two alerts.
+    expect(await res.json()).toEqual({ ok: true, assets: 0, findings: 5 });
 
     const store = d1ScanStore(testEnv.AEGIS_DB);
     const findings = await store.listFindings(ID);
-    expect(findings).toHaveLength(2);
-    expect(findings.map((f) => f.tool).sort()).toEqual(["nuclei", "zap-baseline"]);
+    expect(findings).toHaveLength(4);
+    expect(findings.map((f) => f.tool).sort()).toEqual([
+      "nuclei", "zap-baseline", "zap-baseline", "zap-baseline",
+    ]);
     expect(findings.find((f) => f.tool === "nuclei")).toMatchObject({
       scanId: ID, severity: "high", url: "https://x.example/a", evidence: "proof", cwe: 79,
     });
-    expect(findings.find((f) => f.tool === "zap-baseline")).toMatchObject({
-      scanId: ID, severity: "medium", url: "https://x.example/", cwe: 693,
+    // One ZAP finding per instance: the nested occurrence fields, not the alert.
+    const zap = findings
+      .filter((f) => f.tool === "zap-baseline")
+      .sort((a, b) => a.url.localeCompare(b.url));
+    expect(zap.map((f) => ({ url: f.url, parameter: f.parameter, evidence: f.evidence }))).toEqual([
+      { url: "https://x.example/", parameter: null, evidence: null },
+      { url: "https://x.example/login", parameter: null, evidence: null },
+      { url: "https://x.example/search", parameter: "q", evidence: "proof" },
+    ]);
+    expect(zap.find((f) => f.url === "https://x.example/")).toMatchObject({
+      scanId: ID, severity: "medium", cwe: 693,
+    });
+    expect(zap.find((f) => f.url === "https://x.example/login")).toMatchObject({
+      scanId: ID, severity: "low", cwe: 1021,
     });
 
     // rawRef points at the artifact that was really written to R2.
@@ -84,7 +99,7 @@ describe("executor callback findings ingestion", () => {
 
     expect((await store.get(ID))!.status).toBe("completed");
     const completed = (await store.events(ID)).find((e) => e.event === "completed");
-    expect(completed?.detail).toBe("0 assets; 3 findings");
+    expect(completed?.detail).toBe("0 assets; 5 findings");
   });
 
   it("rejects a replayed callback token with 409 while the scan is still running", async () => {

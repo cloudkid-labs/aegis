@@ -170,38 +170,45 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       expect((await store.get("claim-gh"))!.status).toBe("queued");
     });
 
-    it("claimRetry succeeds once and refuses a stale claim on the same row", async () => {
+    it("createIfNoActiveChild inserts when the parent has no child", async () => {
       const store = make();
-      await store.create(rec("retry-claim", { status: "failed", updatedAt: "2026-11-22T00:00:00.000Z" }));
-      const winner = "2026-11-22T04:00:00.000Z";
-
-      expect(await store.claimRetry("retry-claim", "2026-11-22T00:00:00.000Z", winner)).toBe(true);
-      expect((await store.get("retry-claim"))!.updatedAt).toBe(winner);
-
-      // The losing retry read the row before the winner wrote it.
-      expect(await store.claimRetry("retry-claim", "2026-11-22T00:00:00.000Z", "2026-11-22T04:00:01.000Z")).toBe(false);
-      expect((await store.get("retry-claim"))!.updatedAt).toBe(winner);
-      expect((await store.get("retry-claim"))!.status).toBe("failed");
+      const copy = rec("retry-first", { parentScanId: "retry-parent" });
+      expect(await store.createIfNoActiveChild(copy)).toBe(true);
+      expect(await store.get("retry-first")).toEqual(copy);
     });
 
-    it("claimRetry accepts a cancelled scan", async () => {
+    it("createIfNoActiveChild inserts under a null parent", async () => {
+      // SQL `parent_scan_id=?5` never matches NULL, so a record with no parent
+      // always inserts; the fake must mirror that rather than group nulls.
       const store = make();
-      await store.create(rec("retry-claim-cancelled", { status: "cancelled" }));
-      expect(await store.claimRetry("retry-claim-cancelled", "2026-11-22T00:00:00.000Z", "2026-11-22T05:00:00.000Z")).toBe(true);
-      expect((await store.get("retry-claim-cancelled"))!.updatedAt).toBe("2026-11-22T05:00:00.000Z");
+      expect(await store.createIfNoActiveChild(rec("retry-orphan-a", { parentScanId: null }))).toBe(true);
+      expect(await store.createIfNoActiveChild(rec("retry-orphan-b", { parentScanId: null }))).toBe(true);
     });
 
-    it("claimRetry refuses a scan that is not failed or cancelled", async () => {
-      for (const id of ["retry-claim-running", "retry-claim-done"]) {
+    it("createIfNoActiveChild refuses while a queued child exists", async () => {
+      const store = make();
+      await store.create(rec("retry-queued-child", { parentScanId: "retry-parent-q", status: "queued" }));
+      const copy = rec("retry-copy-q", { parentScanId: "retry-parent-q" });
+      expect(await store.createIfNoActiveChild(copy)).toBe(false);
+      expect(await store.get("retry-copy-q")).toBeNull();
+    });
+
+    it("createIfNoActiveChild refuses while a running child exists", async () => {
+      const store = make();
+      await store.create(rec("retry-running-child", { parentScanId: "retry-parent-r", status: "running" }));
+      const copy = rec("retry-copy-r", { parentScanId: "retry-parent-r" });
+      expect(await store.createIfNoActiveChild(copy)).toBe(false);
+      expect(await store.get("retry-copy-r")).toBeNull();
+    });
+
+    it("createIfNoActiveChild inserts when the only child is terminal", async () => {
+      for (const status of ["completed", "failed", "cancelled"] as const) {
         const store = make();
-        await store.create(rec(id, { status: id.endsWith("running") ? "running" : "completed" }));
-        expect(await store.claimRetry(id, "2026-11-22T00:00:00.000Z", "2026-11-22T06:00:00.000Z")).toBe(false);
-        expect((await store.get(id))!.updatedAt).toBe("2026-11-22T00:00:00.000Z");
+        const parent = `retry-parent-${status}`;
+        await store.create(rec(`${parent}-child`, { parentScanId: parent, status }));
+        expect(await store.createIfNoActiveChild(rec(`${parent}-copy`, { parentScanId: parent }))).toBe(true);
+        expect(await store.get(`${parent}-copy`)).not.toBeNull();
       }
-    });
-
-    it("claimRetry on a missing scan returns false", async () => {
-      expect(await make().claimRetry("retry-claim-missing", "2026-11-22T00:00:00.000Z", "2026-11-22T06:00:00.000Z")).toBe(false);
     });
 
     it("insertAssets stores assets scoped to a scan and is idempotent on id", async () => {

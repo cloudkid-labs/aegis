@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { sha256Hex } from "./auth";
 import { normalize, hasNormalizer, normalizeFindings } from "./normalizers/index";
 import { loadRegistry } from "./registry";
+import { selectInvasionTargets } from "./invasion-targets";
 import { normalizeSubfinder, normalizeHttpx, normalizeKatana, normalizeDnsx, normalizeNaabu, normalizeAlterxResolved } from "./normalizers/explore";
 import { normalizeNucleiJsonl, normalizeZapJson } from "./normalizers/invasion";
-import { nucleiInfo, nucleiRecord, zapAlert, zapReport } from "./test-support/fixtures";
+import { nucleiInfo, nucleiRecord, zapAlert, zapInstance, zapReport } from "./test-support/fixtures";
 
 const SCAN = "scan-test-1";
 const NOW = "2026-11-22T00:00:00.000Z";
@@ -33,6 +34,27 @@ describe("explore normalizers", () => {
     const assets = await normalizeKatana(data, SCAN, NOW);
     expect(assets.length).toBe(2);
     expect(assets[0]!.type).toBe("endpoint");
+  });
+
+  it("katana: response.status_code lands in metadata and survives invasion selection", async () => {
+    // katana writes the status on `response` (pkg/navigation/response.go:
+    // StatusCode int `json:"status_code,omitempty"`), never on the record root.
+    const data = [
+      { request: { endpoint: "https://example.com/api/users" }, response: { status_code: 200 } },
+      { request: { endpoint: "https://example.com/missing" } },
+      { request: { endpoint: "https://example.com/odd" }, response: { status_code: "200" } },
+    ];
+    const assets = await normalizeKatana(data, SCAN, NOW);
+    expect(JSON.parse(assets[0]!.metadata!)).toEqual({ status_code: 200 });
+    expect(JSON.parse(assets[1]!.metadata!)).toEqual({ status_code: null });
+    expect(JSON.parse(assets[2]!.metadata!)).toEqual({ status_code: null });
+
+    const selection = selectInvasionTargets(assets);
+    expect(selection.targets.map((t) => t.url)).toEqual(["https://example.com/api/users"]);
+    expect(selection.excluded).toEqual([
+      { url: "https://example.com/missing", reason: "not-live" },
+      { url: "https://example.com/odd", reason: "not-live" },
+    ]);
   });
 
   it("dnsx: JSON → resolved subdomain assets", async () => {
@@ -175,9 +197,12 @@ describe("nuclei normalizer", () => {
 });
 
 describe("zap normalizer", () => {
-  it("maps an alert to a Finding, every field pinned", async () => {
-    const [f] = await normalizeZapJson(zapReport(), SCAN, NOW);
-    expect(f).toEqual({
+  it("maps every instance of a ZAP alert to its own Finding, every field pinned", async () => {
+    const findings = await normalizeZapJson(zapReport(), SCAN, NOW);
+    expect(findings.length).toBe(3);
+
+    // Instance one: empty param/evidence strings are absence, not values.
+    expect(findings[0]).toEqual({
       id: await sha256Hex(`${SCAN}|zap-baseline|10021|https://x.example/|`),
       scanId: SCAN,
       tool: "zap-baseline",
@@ -186,13 +211,36 @@ describe("zap normalizer", () => {
       title: "Missing CSP",
       description: "d",
       url: "https://x.example/",
-      // Empty strings are absence in the ZAP report, not a parameter or proof.
       parameter: null,
       evidence: null,
       cwe: 693,
       remediation: "s",
       rawRef: null,
       createdAt: NOW,
+    });
+
+    // Instance two of the same alert: the occurrence fields come from here.
+    expect(findings[1]).toMatchObject({
+      id: await sha256Hex(`${SCAN}|zap-baseline|10021|https://x.example/search|q`),
+      url: "https://x.example/search",
+      parameter: "q",
+      evidence: "proof",
+      title: "Missing CSP",
+      severity: "medium",
+      cwe: 693,
+    });
+
+    // The single-instance alert in the same report.
+    expect(findings[2]).toMatchObject({
+      id: await sha256Hex(`${SCAN}|zap-baseline|10022|https://x.example/login|`),
+      title: "Missing Anti-clickjacking Header",
+      url: "https://x.example/login",
+      parameter: null,
+      evidence: null,
+      severity: "low",
+      confidence: "high",
+      cwe: 1021,
+      remediation: "s2",
     });
   });
 
@@ -202,7 +250,8 @@ describe("zap normalizer", () => {
       ["High", "high"], ["Critical", "critical"], ["Bogus", "info"],
     ];
     for (const [riskdesc, expected] of cases) {
-      const [f] = await normalizeZapJson(zapReport([zapAlert({ riskdesc })]), SCAN, NOW);
+      const report = zapReport([zapAlert({ riskdesc, instances: [zapInstance()] })]);
+      const [f] = await normalizeZapJson(report, SCAN, NOW);
       expect(f!.severity).toBe(expected);
     }
   });
@@ -213,31 +262,61 @@ describe("zap normalizer", () => {
       ["Low", "low"], ["False Positive", "low"], ["Odd", "medium"],
     ];
     for (const [confidence, expected] of cases) {
-      const [f] = await normalizeZapJson(zapReport([zapAlert({ confidence })]), SCAN, NOW);
+      const report = zapReport([zapAlert({ confidence, instances: [zapInstance()] })]);
+      const [f] = await normalizeZapJson(report, SCAN, NOW);
       expect(f!.confidence).toBe(expected);
     }
   });
 
-  it("keeps a parameter and evidence when the report has them", async () => {
-    const [f] = await normalizeZapJson(zapReport([zapAlert({ param: "q", evidence: "proof" })]), SCAN, NOW);
+  it("keeps a parameter and evidence when the instance has them", async () => {
+    const report = zapReport([zapAlert({ instances: [zapInstance({ param: "q", evidence: "proof" })] })]);
+    const [f] = await normalizeZapJson(report, SCAN, NOW);
     expect(f!.parameter).toBe("q");
     expect(f!.evidence).toBe("proof");
   });
 
+  it("falls back to the instance attack for evidence when evidence is absent", async () => {
+    const report = zapReport([zapAlert({ instances: [zapInstance({ attack: "<script>alert(1)</script>" })] })]);
+    const [f] = await normalizeZapJson(report, SCAN, NOW);
+    expect(f!.evidence).toBe("<script>alert(1)</script>");
+    expect(f!.parameter).toBeNull();
+  });
+
+  it("skips instances with no uri and alerts with no usable instance", async () => {
+    const report = {
+      site: [{
+        alerts: [
+          // Empty uri, non-record, and missing instances: nothing to locate.
+          zapAlert({ pluginid: "10024", instances: [zapInstance({ uri: "" }), { param: "q" }] }),
+          zapAlert({ instances: [] }),
+          zapAlert({ instances: undefined }),
+          "not-an-alert",
+          // One usable instance survives beside a blank one.
+          zapAlert({ pluginid: "10025", instances: [zapInstance({ uri: "" }), zapInstance({ uri: "https://x.example/kept" })] }),
+        ],
+      }],
+    };
+    const findings = await normalizeZapJson(report, SCAN, NOW);
+    expect(findings.map((f) => f.url)).toEqual(["https://x.example/kept"]);
+    expect(findings[0]!.id).toBe(await sha256Hex(`${SCAN}|zap-baseline|10025|https://x.example/kept|`));
+  });
+
   it("falls back to name for the title when alert is absent", async () => {
-    const [f] = await normalizeZapJson(zapReport([zapAlert({ alert: "" })]), SCAN, NOW);
+    const report = zapReport([zapAlert({ alert: "", instances: [zapInstance()] })]);
+    const [f] = await normalizeZapJson(report, SCAN, NOW);
     expect(f!.title).toBe("Missing CSP");
   });
 
   it("nulls the CWE when cweid is absent or unparseable", async () => {
-    const [absent] = await normalizeZapJson(zapReport([zapAlert({ cweid: undefined })]), SCAN, NOW);
-    expect(absent!.cwe).toBeNull();
-    const [bogus] = await normalizeZapJson(zapReport([zapAlert({ cweid: "n/a" })]), SCAN, NOW);
-    expect(bogus!.cwe).toBeNull();
+    const absent = await normalizeZapJson(zapReport([zapAlert({ cweid: undefined, instances: [zapInstance()] })]), SCAN, NOW);
+    expect(absent[0]!.cwe).toBeNull();
+    const bogus = await normalizeZapJson(zapReport([zapAlert({ cweid: "n/a", instances: [zapInstance()] })]), SCAN, NOW);
+    expect(bogus[0]!.cwe).toBeNull();
   });
 
-  it("keys a finding per parameter, so two parameters never collide on insert", async () => {
-    const findings = await normalizeZapJson(zapReport([zapAlert({ param: "q" }), zapAlert({ param: "id" })]), SCAN, NOW);
+  it("keys a finding per instance parameter, so two parameters never collide on insert", async () => {
+    const report = zapReport([zapAlert({ instances: [zapInstance({ param: "q" }), zapInstance({ param: "id" })] })]);
+    const findings = await normalizeZapJson(report, SCAN, NOW);
     expect(findings.length).toBe(2);
     expect(findings[0]!.id).not.toBe(findings[1]!.id);
   });
@@ -245,8 +324,8 @@ describe("zap normalizer", () => {
   it("flattens every site and alert", async () => {
     const report = {
       site: [
-        { alerts: [zapAlert(), zapAlert({ pluginid: "10022", uri: "https://x.example/b" })] },
-        { alerts: [zapAlert({ pluginid: "10023", uri: "https://x.example/c" })] },
+        { alerts: [zapAlert({ instances: [zapInstance({ uri: "https://x.example/" }), zapInstance({ uri: "https://x.example/b" })] })] },
+        { alerts: [zapAlert({ pluginid: "10023", instances: [zapInstance({ uri: "https://x.example/c" })] })] },
       ],
     };
     const findings = await normalizeZapJson(report, SCAN, NOW);
@@ -256,7 +335,7 @@ describe("zap normalizer", () => {
   it("hashes a stable id for the same report", async () => {
     const first = await normalizeZapJson(zapReport(), SCAN, NOW);
     const again = await normalizeZapJson(zapReport(), SCAN, NOW);
-    expect(first[0]!.id).toBe(again[0]!.id);
+    expect(first.map((f) => f.id)).toEqual(again.map((f) => f.id));
   });
 
   it("returns [] for garbage input", async () => {
@@ -269,7 +348,7 @@ describe("zap normalizer", () => {
 describe("findings dispatch", () => {
   it("routes by finding normalizer key", async () => {
     expect((await normalizeFindings("nuclei-jsonl", "nuclei", [nucleiRecord()], SCAN, NOW)).length).toBe(1);
-    expect((await normalizeFindings("zap-json", "zap-baseline", zapReport(), SCAN, NOW)).length).toBe(1);
+    expect((await normalizeFindings("zap-json", "zap-baseline", zapReport(), SCAN, NOW)).length).toBe(3);
   });
 
   it("returns [] for an unknown key", async () => {

@@ -262,16 +262,6 @@ function retriedDetail(newScanId: string, operatorEmail: string): string {
   return `${newScanId}; retried by ${operatorEmail}`;
 }
 
-/** The retry claim's CAS token must differ from the value it compares against.
- *  ISO timestamps only resolve to the millisecond, so a scan that failed in
- *  the same millisecond as the retry would otherwise rewrite updated_at
- *  unchanged and let a second retry claim the same row. */
-function claimToken(expectedUpdatedAt: string): string {
-  const now = Date.now();
-  const expected = Date.parse(expectedUpdatedAt);
-  return new Date(Number.isFinite(expected) && now <= expected ? expected + 1 : now).toISOString();
-}
-
 /**
  * Persist the authorization row and turn a failure into the right response.
  *
@@ -319,13 +309,7 @@ export async function handleRetryScan(
   const limit = await env.SCAN_LIMITER.limit({ key: "scans" });
   if (!limit.success) return jsonError("Rate limit exceeded", 429);
 
-  // Single-flight: two requests of a concurrent retry read the same row, but
-  // only the first claim moves its updatedAt. Without this each request would
-  // create and dispatch its own active copy of one failed scan.
   const now = new Date().toISOString();
-  if (!(await store.claimRetry(rec.id, rec.updatedAt, claimToken(rec.updatedAt)))) {
-    return jsonError("Retry already in progress", 409);
-  }
   if (rec.phase === "invasion") return retryInvasion(env, store, rec, operatorEmail, now);
 
   const options = rec.options ? (JSON.parse(rec.options) as Record<string, unknown>) : null;
@@ -338,7 +322,13 @@ export async function handleRetryScan(
     executor: "github", externalUrl: null, createdAt: now, updatedAt: now,
     completedAt: null, error: null, options: rec.options,
   };
-  await store.create(copy);
+  // The insert is the single-flight guard: it lands only while no queued or
+  // running sibling shares the parent. A competing retry that read the same
+  // failed row still cannot create a second active copy, and the guard holds
+  // for the whole dispatch window rather than one status read.
+  if (!(await store.createIfNoActiveChild(copy))) {
+    return jsonError("Retry already in progress", 409);
+  }
   await store.addEvent(newId, "created", `retry:${id} ${rec.phase}:${tools.map((t) => t.name).join(",")}`);
   await store.addEvent(id, "retried", retriedDetail(newId, operatorEmail));
   const launched = await launch(env, store, newId, rec.target, rec.phase, tools, Number(options?.depth) || 2);
@@ -405,7 +395,13 @@ async function retryInvasion(
     executor: "github", externalUrl: null, createdAt: now, updatedAt: now,
     completedAt: null, error: null, options: rec.options,
   };
-  await store.create(copy);
+  // Same atomic guard as the explore path: a queued/running sibling under the
+  // same parent (for a chained scan, the explore parent) refuses a second
+  // active copy. Everything that can reject the retry has already run, so a
+  // refused insert leaves no row behind.
+  if (!(await store.createIfNoActiveChild(copy))) {
+    return jsonError("Retry already in progress", 409);
+  }
   const authorizationRec: ScanAuthorization = {
     scanId: newId,
     email: authorization.email,
