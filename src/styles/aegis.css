@@ -233,16 +233,125 @@ main {
   align-content: start;
 }
 
-/* access panel — one calm glass card, no button inside: the header holds it */
+/* public landing — an open statement, not a panel: the header holds the one CTA */
 #signin-notice {
-  width: min(100%, 560px); margin: var(--sp-12) auto 0;
-  padding: var(--sp-8) var(--sp-6);
-  text-align: center;
-  background-color: hsl(var(--glass-bg-strong));
+  width: min(100%, 960px); margin: 0 auto;
+  padding: var(--sp-6) 0;
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-8);
+  align-items: center;
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
-#signin-notice > h2 { margin: 0 0 var(--sp-3); font-size: 1.15rem; }
-.notice-lede { margin: 0 auto; max-width: 46ch; color: hsl(var(--muted)); }
+.notice-copy { min-width: 0; }
+#signin-notice h2 {
+  margin: 0 0 var(--sp-3);
+  font-size: clamp(1.6rem, 3.2vw, 2.1rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+.notice-lede { margin: 0; max-width: 46ch; color: hsl(var(--muted)); }
+.notice-phases {
+  margin: var(--sp-4) 0 0; padding: 0; list-style: none;
+  display: grid; gap: var(--sp-1);
+  font-size: 0.9rem; color: hsl(var(--muted));
+}
 .notice-hint { margin: var(--sp-4) 0 0; font-size: 0.82rem; color: hsl(var(--faint)); }
+
+/* recon graph — decoration only (aria-hidden); every colour is a token above */
+.recon-graph { display: block; width: 100%; height: auto; }
+.recon-edge { stroke: hsl(var(--glass-edge)); stroke-width: 1; }
+.recon-target-halo { fill: hsl(var(--accent-soft)); }
+.recon-target-ring { fill: none; stroke: hsl(var(--accent-edge)); stroke-width: 1.5; }
+.recon-target-core { fill: hsl(var(--accent)); }
+.recon-node { opacity: 0.3; transform-box: fill-box; transform-origin: center; }
+.recon-node-ring { fill: none; stroke: hsl(var(--glass-edge-strong)); stroke-width: 1; }
+.recon-node-dot { fill: hsl(var(--accent)); }
+.recon-sweep { opacity: 0; transform: translateX(-24px); }
+.recon-sweep-glow { fill: hsl(var(--accent) / 0.1); }
+.recon-sweep-bar { fill: hsl(var(--accent) / 0.55); }
+.recon-chip { opacity: 0; }
+.recon-chip-bg { fill: hsl(var(--glass-chip)); stroke: hsl(var(--glass-edge)); stroke-width: 1; }
+.recon-chip-label { font-family: var(--font-body); font-size: 11px; }
+.recon-chip-high .recon-chip-label { fill: hsl(var(--danger)); }
+.recon-chip-medium .recon-chip-label { fill: hsl(var(--warn)); }
+.recon-chip-low .recon-chip-label { fill: hsl(var(--ok)); }
+
+.recon-sweep { animation: recon-sweep 6s linear infinite; }
+.recon-node-1 { animation: recon-node-1 6s var(--ease-out) infinite; }
+.recon-node-2 { animation: recon-node-2 6s var(--ease-out) infinite; }
+.recon-node-3 { animation: recon-node-3 6s var(--ease-out) infinite; }
+.recon-node-4 { animation: recon-node-4 6s var(--ease-out) infinite; }
+.recon-node-5 { animation: recon-node-5 6s var(--ease-out) infinite; }
+.recon-node-6 { animation: recon-node-6 6s var(--ease-out) infinite; }
+.recon-chip-high { animation: recon-chip-high 6s var(--ease-out) infinite; }
+.recon-chip-medium { animation: recon-chip-medium 6s var(--ease-out) infinite; }
+.recon-chip-low { animation: recon-chip-low 6s var(--ease-out) infinite; }
+
+/* 6s pass: sweep 0-45%, nodes light in sweep order, chips 55-66%, dim by 93%. */
+@keyframes recon-sweep {
+  0% { transform: translateX(-24px); opacity: 0; }
+  2% { transform: translateX(-8px); opacity: 1; }
+  45% { transform: translateX(544px); opacity: 1; }
+  50%, 100% { transform: translateX(544px); opacity: 0; }
+}
+@keyframes recon-node-1 {
+  0%, 5% { opacity: 0.3; transform: scale(1); }
+  8% { opacity: 1; transform: scale(1.15); }
+  13%, 86% { opacity: 1; transform: scale(1); }
+  93%, 100% { opacity: 0.3; transform: scale(1); }
+}
+@keyframes recon-node-2 {
+  0%, 21% { opacity: 0.3; transform: scale(1); }
+  24% { opacity: 1; transform: scale(1.15); }
+  29%, 86% { opacity: 1; transform: scale(1); }
+  93%, 100% { opacity: 0.3; transform: scale(1); }
+}
+@keyframes recon-node-3 {
+  0%, 35% { opacity: 0.3; transform: scale(1); }
+  38% { opacity: 1; transform: scale(1.15); }
+  43%, 86% { opacity: 1; transform: scale(1); }
+  93%, 100% { opacity: 0.3; transform: scale(1); }
+}
+@keyframes recon-node-4 {
+  0%, 33% { opacity: 0.3; transform: scale(1); }
+  36% { opacity: 1; transform: scale(1.15); }
+  41%, 86% { opacity: 1; transform: scale(1); }
+  93%, 100% { opacity: 0.3; transform: scale(1); }
+}
+@keyframes recon-node-5 {
+  0%, 17% { opacity: 0.3; transform: scale(1); }
+  20% { opacity: 1; transform: scale(1.15); }
+  25%, 86% { opacity: 1; transform: scale(1); }
+  93%, 100% { opacity: 0.3; transform: scale(1); }
+}
+@keyframes recon-node-6 {
+  0%, 3% { opacity: 0.3; transform: scale(1); }
+  6% { opacity: 1; transform: scale(1.15); }
+  11%, 86% { opacity: 1; transform: scale(1); }
+  93%, 100% { opacity: 0.3; transform: scale(1); }
+}
+@keyframes recon-chip-high {
+  0%, 55% { opacity: 0; transform: translateY(6px); }
+  60%, 86% { opacity: 1; transform: translateY(0); }
+  93%, 100% { opacity: 0; transform: translateY(0); }
+}
+@keyframes recon-chip-medium {
+  0%, 58% { opacity: 0; transform: translateY(6px); }
+  63%, 86% { opacity: 1; transform: translateY(0); }
+  93%, 100% { opacity: 0; transform: translateY(0); }
+}
+@keyframes recon-chip-low {
+  0%, 61% { opacity: 0; transform: translateY(6px); }
+  66%, 86% { opacity: 1; transform: translateY(0); }
+  93%, 100% { opacity: 0; transform: translateY(0); }
+}
 
 /* panels */
 section {
@@ -510,7 +619,7 @@ footer span:first-child { color: hsl(var(--muted)); }
   main { padding-top: var(--sp-6); }
   section { padding: var(--sp-4); }
   #session-nav { margin-left: 0; width: 100%; }
-  #signin-notice { margin-top: var(--sp-6); padding: var(--sp-6) var(--sp-4); }
+  #signin-notice { grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); padding: 0; }
   #create-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .field-target, #tool-toggles { grid-column: 1 / -1; }
   .field-submit button { width: 100%; }
@@ -524,4 +633,9 @@ footer span:first-child { color: hsl(var(--muted)); }
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+  /* The global collapse keeps animation-delay, so the graph's staggered
+     parts must be switched off and pinned to their final state here. */
+  .recon-graph .recon-sweep { animation: none; opacity: 0; }
+  .recon-graph .recon-node { animation: none; opacity: 1; transform: none; }
+  .recon-graph .recon-chip { animation: none; opacity: 1; transform: none; }
 }

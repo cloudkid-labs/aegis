@@ -30,9 +30,70 @@ import "../styles/aegis.css";
     </header>
     <main id="main-content">
       <section id="signin-notice" hidden>
-        <h2>Operator sign-in required</h2>
-        <p class="notice-lede">Aegis is a private recon console. Sign in with an allowlisted Google account to create scans and review history.</p>
-        <p class="notice-hint">Use Sign in with Google at the top of the page.</p>
+        <div class="notice-copy">
+          <h2>Know the surface. Then test it.</h2>
+          <p class="notice-lede">Aegis orchestrates open-source recon and pentest tooling on Cloudflare Workers. Access is allowlisted.</p>
+          <ul class="notice-phases">
+            <li>Explore — subdomains, live hosts, endpoints.</li>
+            <li>Invasion — nuclei and ZAP findings, severity-ranked.</li>
+          </ul>
+          <p class="notice-hint">Use Sign in with Google at the top of the page.</p>
+        </div>
+        <svg class="recon-graph" aria-hidden="true" focusable="false" viewBox="0 0 520 360" width="100%" height="auto">
+          <g class="recon-edges">
+            <line class="recon-edge" x1="260" y1="176" x2="96" y2="88" />
+            <line class="recon-edge" x1="260" y1="176" x2="276" y2="46" />
+            <line class="recon-edge" x1="260" y1="176" x2="438" y2="120" />
+            <line class="recon-edge" x1="260" y1="176" x2="410" y2="272" />
+            <line class="recon-edge" x1="260" y1="176" x2="228" y2="312" />
+            <line class="recon-edge" x1="260" y1="176" x2="74" y2="240" />
+          </g>
+          <g class="recon-target">
+            <circle class="recon-target-halo" cx="260" cy="176" r="44" />
+            <circle class="recon-target-ring" cx="260" cy="176" r="24" />
+            <circle class="recon-target-core" cx="260" cy="176" r="9" />
+          </g>
+          <g class="recon-node recon-node-1">
+            <circle class="recon-node-ring" cx="96" cy="88" r="15" />
+            <circle class="recon-node-dot" cx="96" cy="88" r="5" />
+          </g>
+          <g class="recon-node recon-node-2">
+            <circle class="recon-node-ring" cx="276" cy="46" r="15" />
+            <circle class="recon-node-dot" cx="276" cy="46" r="5" />
+          </g>
+          <g class="recon-node recon-node-3">
+            <circle class="recon-node-ring" cx="438" cy="120" r="15" />
+            <circle class="recon-node-dot" cx="438" cy="120" r="5" />
+          </g>
+          <g class="recon-node recon-node-4">
+            <circle class="recon-node-ring" cx="410" cy="272" r="15" />
+            <circle class="recon-node-dot" cx="410" cy="272" r="5" />
+          </g>
+          <g class="recon-node recon-node-5">
+            <circle class="recon-node-ring" cx="228" cy="312" r="15" />
+            <circle class="recon-node-dot" cx="228" cy="312" r="5" />
+          </g>
+          <g class="recon-node recon-node-6">
+            <circle class="recon-node-ring" cx="74" cy="240" r="15" />
+            <circle class="recon-node-dot" cx="74" cy="240" r="5" />
+          </g>
+          <g class="recon-sweep">
+            <rect class="recon-sweep-glow" x="-7" y="6" width="14" height="348" />
+            <rect class="recon-sweep-bar" x="-1" y="6" width="2" height="348" />
+          </g>
+          <g class="recon-chip recon-chip-high">
+            <rect class="recon-chip-bg" x="392" y="48" width="56" height="22" rx="11" />
+            <text class="recon-chip-label" x="420" y="63" text-anchor="middle">high</text>
+          </g>
+          <g class="recon-chip recon-chip-medium">
+            <rect class="recon-chip-bg" x="426" y="296" width="64" height="22" rx="11" />
+            <text class="recon-chip-label" x="458" y="311" text-anchor="middle">medium</text>
+          </g>
+          <g class="recon-chip recon-chip-low">
+            <rect class="recon-chip-bg" x="36" y="40" width="50" height="22" rx="11" />
+            <text class="recon-chip-label" x="61" y="55" text-anchor="middle">low</text>
+          </g>
+        </svg>
       </section>
       <section id="create-section">
         <h2>New explore scan</h2>
