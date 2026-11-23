@@ -30,70 +30,111 @@ import "../styles/aegis.css";
     </header>
     <main id="main-content">
       <section id="signin-notice" hidden>
-        <div class="notice-copy">
-          <h2>Know the surface. Then test it.</h2>
-          <p class="notice-lede">Aegis orchestrates open-source recon and pentest tooling on Cloudflare Workers. Access is allowlisted.</p>
-          <ul class="notice-phases">
-            <li>Explore — subdomains, live hosts, endpoints.</li>
-            <li>Invasion — nuclei and ZAP findings, severity-ranked.</li>
-          </ul>
-          <p class="notice-hint">Use Sign in with Google at the top of the page.</p>
+        <div class="hero-grid">
+          <div class="notice-copy">
+            <h2>Know the surface. Then test it.</h2>
+            <p class="notice-lede">Aegis orchestrates open-source recon and pentest tooling on Cloudflare Workers. Access is allowlisted.</p>
+            <ul class="notice-phases">
+              <li>Explore — subdomains, live hosts, endpoints.</li>
+              <li>Invasion — nuclei and ZAP findings, severity-ranked.</li>
+            </ul>
+            <p class="notice-hint">Use Sign in with Google at the top of the page.</p>
+          </div>
+          <svg class="recon-graph" aria-hidden="true" focusable="false" viewBox="0 0 520 360" width="100%" height="auto">
+            <g class="recon-edges">
+              <line class="recon-edge" x1="260" y1="176" x2="96" y2="88" />
+              <line class="recon-edge" x1="260" y1="176" x2="276" y2="46" />
+              <line class="recon-edge" x1="260" y1="176" x2="438" y2="120" />
+              <line class="recon-edge" x1="260" y1="176" x2="410" y2="272" />
+              <line class="recon-edge" x1="260" y1="176" x2="228" y2="312" />
+              <line class="recon-edge" x1="260" y1="176" x2="74" y2="240" />
+            </g>
+            <g class="recon-target">
+              <circle class="recon-target-halo" cx="260" cy="176" r="44" />
+              <circle class="recon-target-ring" cx="260" cy="176" r="24" />
+              <circle class="recon-target-core" cx="260" cy="176" r="9" />
+            </g>
+            <g class="recon-node recon-node-1">
+              <circle class="recon-node-ring" cx="96" cy="88" r="15" />
+              <circle class="recon-node-dot" cx="96" cy="88" r="5" />
+            </g>
+            <g class="recon-node recon-node-2">
+              <circle class="recon-node-ring" cx="276" cy="46" r="15" />
+              <circle class="recon-node-dot" cx="276" cy="46" r="5" />
+            </g>
+            <g class="recon-node recon-node-3">
+              <circle class="recon-node-ring" cx="438" cy="120" r="15" />
+              <circle class="recon-node-dot" cx="438" cy="120" r="5" />
+            </g>
+            <g class="recon-node recon-node-4">
+              <circle class="recon-node-ring" cx="410" cy="272" r="15" />
+              <circle class="recon-node-dot" cx="410" cy="272" r="5" />
+            </g>
+            <g class="recon-node recon-node-5">
+              <circle class="recon-node-ring" cx="228" cy="312" r="15" />
+              <circle class="recon-node-dot" cx="228" cy="312" r="5" />
+            </g>
+            <g class="recon-node recon-node-6">
+              <circle class="recon-node-ring" cx="74" cy="240" r="15" />
+              <circle class="recon-node-dot" cx="74" cy="240" r="5" />
+            </g>
+            <g class="recon-sweep">
+              <rect class="recon-sweep-glow" x="-7" y="6" width="14" height="348" />
+              <rect class="recon-sweep-bar" x="-1" y="6" width="2" height="348" />
+            </g>
+            <g class="recon-chip recon-chip-high">
+              <rect class="recon-chip-bg" x="392" y="48" width="56" height="22" rx="11" />
+              <text class="recon-chip-label" x="420" y="63" text-anchor="middle">high</text>
+            </g>
+            <g class="recon-chip recon-chip-medium">
+              <rect class="recon-chip-bg" x="426" y="296" width="64" height="22" rx="11" />
+              <text class="recon-chip-label" x="458" y="311" text-anchor="middle">medium</text>
+            </g>
+            <g class="recon-chip recon-chip-low">
+              <rect class="recon-chip-bg" x="36" y="40" width="50" height="22" rx="11" />
+              <text class="recon-chip-label" x="61" y="55" text-anchor="middle">low</text>
+            </g>
+          </svg>
         </div>
-        <svg class="recon-graph" aria-hidden="true" focusable="false" viewBox="0 0 520 360" width="100%" height="auto">
-          <g class="recon-edges">
-            <line class="recon-edge" x1="260" y1="176" x2="96" y2="88" />
-            <line class="recon-edge" x1="260" y1="176" x2="276" y2="46" />
-            <line class="recon-edge" x1="260" y1="176" x2="438" y2="120" />
-            <line class="recon-edge" x1="260" y1="176" x2="410" y2="272" />
-            <line class="recon-edge" x1="260" y1="176" x2="228" y2="312" />
-            <line class="recon-edge" x1="260" y1="176" x2="74" y2="240" />
-          </g>
-          <g class="recon-target">
-            <circle class="recon-target-halo" cx="260" cy="176" r="44" />
-            <circle class="recon-target-ring" cx="260" cy="176" r="24" />
-            <circle class="recon-target-core" cx="260" cy="176" r="9" />
-          </g>
-          <g class="recon-node recon-node-1">
-            <circle class="recon-node-ring" cx="96" cy="88" r="15" />
-            <circle class="recon-node-dot" cx="96" cy="88" r="5" />
-          </g>
-          <g class="recon-node recon-node-2">
-            <circle class="recon-node-ring" cx="276" cy="46" r="15" />
-            <circle class="recon-node-dot" cx="276" cy="46" r="5" />
-          </g>
-          <g class="recon-node recon-node-3">
-            <circle class="recon-node-ring" cx="438" cy="120" r="15" />
-            <circle class="recon-node-dot" cx="438" cy="120" r="5" />
-          </g>
-          <g class="recon-node recon-node-4">
-            <circle class="recon-node-ring" cx="410" cy="272" r="15" />
-            <circle class="recon-node-dot" cx="410" cy="272" r="5" />
-          </g>
-          <g class="recon-node recon-node-5">
-            <circle class="recon-node-ring" cx="228" cy="312" r="15" />
-            <circle class="recon-node-dot" cx="228" cy="312" r="5" />
-          </g>
-          <g class="recon-node recon-node-6">
-            <circle class="recon-node-ring" cx="74" cy="240" r="15" />
-            <circle class="recon-node-dot" cx="74" cy="240" r="5" />
-          </g>
-          <g class="recon-sweep">
-            <rect class="recon-sweep-glow" x="-7" y="6" width="14" height="348" />
-            <rect class="recon-sweep-bar" x="-1" y="6" width="2" height="348" />
-          </g>
-          <g class="recon-chip recon-chip-high">
-            <rect class="recon-chip-bg" x="392" y="48" width="56" height="22" rx="11" />
-            <text class="recon-chip-label" x="420" y="63" text-anchor="middle">high</text>
-          </g>
-          <g class="recon-chip recon-chip-medium">
-            <rect class="recon-chip-bg" x="426" y="296" width="64" height="22" rx="11" />
-            <text class="recon-chip-label" x="458" y="311" text-anchor="middle">medium</text>
-          </g>
-          <g class="recon-chip recon-chip-low">
-            <rect class="recon-chip-bg" x="36" y="40" width="50" height="22" rx="11" />
-            <text class="recon-chip-label" x="61" y="55" text-anchor="middle">low</text>
-          </g>
-        </svg>
+        <div class="landing-strip" id="landing-pipeline">
+          <h3>The pipeline</h3>
+          <ol class="pipeline-steps">
+            <li>
+              <span class="step-num">1</span>
+              <p class="step-title">Point it at a target.</p>
+              <p class="step-body">Explore runs subfinder, dnsx, httpx and katana on GitHub Actions and stores what they find.</p>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <p class="step-title">Choose what to test.</p>
+              <p class="step-body">Invasion pre-selects the live URLs from an Explore run; you edit the list and confirm before anything runs.</p>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <p class="step-title">Read ranked findings.</p>
+              <p class="step-body">Severity, evidence, remediation and a SARIF export per scan.</p>
+            </li>
+          </ol>
+          <p class="strip-note">Explore is live; Invasion lands in Phase 2.</p>
+        </div>
+        <div class="landing-strip" id="landing-tooling">
+          <h3>Open tooling</h3>
+          <ul class="tool-roster">
+            <li><a href="https://github.com/projectdiscovery/subfinder">subfinder</a> <span class="tool-role">subdomain enumeration</span></li>
+            <li><a href="https://github.com/projectdiscovery/dnsx">dnsx</a> <span class="tool-role">DNS resolution</span></li>
+            <li><a href="https://github.com/projectdiscovery/httpx">httpx</a> <span class="tool-role">live host probing</span></li>
+            <li><a href="https://github.com/projectdiscovery/katana">katana</a> <span class="tool-role">crawling</span></li>
+            <li><a href="https://github.com/projectdiscovery/naabu">naabu</a> <span class="tool-role">port scanning (opt-in)</span></li>
+            <li><a href="https://github.com/projectdiscovery/alterx">alterx</a> <span class="tool-role">subdomain permutations (opt-in)</span></li>
+            <li><a href="https://github.com/projectdiscovery/nuclei">nuclei</a> <span class="tool-role">template-based probes</span></li>
+            <li><a href="https://www.zaproxy.org/">ZAP</a> <span class="tool-role">baseline and full scans</span></li>
+          </ul>
+          <p class="strip-note">Aegis orchestrates these; it adds no attack rules of its own.</p>
+        </div>
+        <div class="landing-strip" id="landing-privacy">
+          <h3>Private by default</h3>
+          <p class="notice-lede">Sign-in is allowlisted to named Google accounts. Scans and their results stay in your account's history; nothing is published.</p>
+        </div>
       </section>
       <section id="create-section">
         <h2>New explore scan</h2>

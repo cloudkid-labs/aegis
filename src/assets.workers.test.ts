@@ -82,6 +82,17 @@ describe("Astro static output via ASSETS", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*recon-graph/);
   });
 
+  it("ships the public pipeline, tooling and privacy strips", async () => {
+    const html = await (await SELF.fetch("https://aegis.test/")).text();
+    for (const id of ["landing-pipeline", "landing-tooling", "landing-privacy"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    // The honesty line is load-bearing: Explore is shipped, Invasion is not.
+    expect(html).toContain("Explore is live; Invasion lands in Phase 2.");
+    expect(html).toContain('href="https://github.com/projectdiscovery/nuclei"');
+    expect(html).toContain('href="https://www.zaproxy.org/"');
+  });
+
   it("serves the built 404 page with a 404 status", async () => {
     const res = await SELF.fetch("https://aegis.test/does-not-exist");
     expect(res.status).toBe(404);
