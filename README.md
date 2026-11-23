@@ -20,7 +20,7 @@ OSS reconnaissance and penetration testing platform on Cloudflare Workers.
 - **D1** — scans, assets, findings, events, sessions
 - **R2** — raw tool output, SARIF reports
 - **GitHub Actions** — runs tool containers (unlimited minutes, public repo)
-- **Tool Registry** — `tools.json` config. Add a tool = add an entry; the executor (`scripts/run-explore.mjs`) reads it, so no workflow edit is needed.
+- **Tool Registry** — `tools.json` config. Add a tool = add an entry; the executor (`scripts/run-scan.mjs`) reads it, so no workflow edit is needed.
 
 ## Quick Start
 

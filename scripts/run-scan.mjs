@@ -1,17 +1,27 @@
-// Registry-driven Explore executor, run by .github/workflows/aegis-explore.yml.
-// tools.json (checked out beside this script) is the source of truth: the
-// selected tools' configured images and args are what actually run, so adding
-// or retuning a tool is a config edit, never a workflow edit.
+// Registry-driven scan executor for both phases, run by
+// .github/workflows/aegis-explore.yml and aegis-invasion.yml. tools.json
+// (checked out beside this script) is the source of truth: the selected
+// tools' configured images and args are what actually run, so adding or
+// retuning a tool is a config edit, never a workflow edit.
 //
-// All user-controlled values arrive via env (TARGET_URL, TOOLS_JSON,
-// OPTIONS_JSON, CB_URL, CB_TOKEN), never as shell-interpolated source.
+// PHASE (explore default) picks which registry entries may run. Invasion adds
+// {{urls}} (the authorized selection, written to /out/urls.txt from
+// TARGETS_JSON) and {{severity}}; {{target}}/{{host}} still resolve from
+// TARGET_URL, which for a chained invasion is the parent explore target.
+//
+// All user-controlled values arrive via env (TARGET_URL, TARGETS_JSON,
+// TOOLS_JSON, OPTIONS_JSON, CB_URL, CB_TOKEN), never as shell-interpolated
+// source.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 
 const OUT = "/tmp/aegis-out";
-// In-container path of the shared hosts list (the mount maps OUT -> /out).
+// In-container paths of the shared lists (the mount maps OUT -> /out).
 const HOSTS_ARG = "/out/hosts.txt";
+const URLS_ARG = "/out/urls.txt";
+const phase = process.env.PHASE || "explore";
 const target = process.env.TARGET_URL ?? "";
+const targetList = JSON.parse(process.env.TARGETS_JSON ?? "[]");
 const selected = JSON.parse(process.env.TOOLS_JSON ?? "[]");
 const options = JSON.parse(process.env.OPTIONS_JSON ?? "{}");
 const callbackUrl = process.env.CB_URL ?? "";
@@ -23,9 +33,28 @@ const callbackToken = process.env.CB_TOKEN ?? "";
 let host = "";
 try { host = new URL(target).hostname; } catch { host = ""; }
 const depth = Number.isInteger(Number(options.depth)) && Number(options.depth) > 0 ? String(options.depth) : "2";
+// Nuclei's severity filter. The create handler already rejects unknown values;
+// the design's default applies when the option is absent.
+const severity = typeof options.severity === "string" && options.severity.trim() !== ""
+  ? options.severity.trim()
+  : "critical,high,medium";
+
+// Mirrors validateTarget in src/handlers/scans.ts. Defence in depth: the
+// Worker validated the selection, but a tampered dispatch payload must never
+// aim a scanner at a private address. No import path exists into Worker
+// source from this script, so the rule is copied and has to be kept in step
+// by hand.
+const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.)/i;
+function validUrl(raw) {
+  let url;
+  try { url = new URL(raw); } catch { return false; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const name = url.hostname.toLowerCase();
+  return !(PRIVATE_HOST.test(name) || name.endsWith(".internal") || name.endsWith(".local") || name === "[::1]");
+}
 
 const registry = JSON.parse(fs.readFileSync(new URL("../tools.json", import.meta.url), "utf8"));
-const tools = registry.tools.filter((t) => t.phase === "explore" && selected.includes(t.name));
+const tools = registry.tools.filter((t) => t.phase === phase && selected.includes(t.name));
 
 fs.mkdirSync(OUT, { recursive: true });
 const failures = [];
@@ -45,14 +74,17 @@ function resolve(arg) {
     .replaceAll("{{target}}", target)
     .replaceAll("{{host}}", host)
     .replaceAll("{{hosts}}", HOSTS_ARG)
+    .replaceAll("{{urls}}", URLS_ARG)
+    .replaceAll("{{severity}}", severity)
     .replaceAll("{{depth}}", depth);
 }
 
 // The output path is whatever the registry args pass to a write flag; mapping
 // /out/ back to the host mount lets the post step find each tool's result.
+// ZAP reports through -J, so it counts as a write flag like the rest.
 function outputPath(argv) {
   for (let i = 0; i < argv.length - 1; i++) {
-    if (["-o", "--output", "-sarif-export", "-export"].includes(argv[i])) {
+    if (["-o", "--output", "-J", "-sarif-export", "-export"].includes(argv[i])) {
       return argv[i + 1].replace(/^\/out\//, `${OUT}/`);
     }
   }
@@ -95,18 +127,61 @@ function addArtifact(name, format, data, raw) {
   if (fit !== null) { used = BUDGET; artifacts.push({ tool: name, format, data: fit }); }
 }
 
+async function postCallback(body) {
+  const res = await fetch(callbackUrl, {
+    method: "POST",
+    headers: { authorization: `Bearer ${callbackToken}`, "content-type": "application/json" },
+    body,
+  });
+  console.log("callback", res.status);
+  return res;
+}
+
+// Invasion scans nuclei across the authorized selection, so the list must be
+// on disk before any container starts. Re-check every URL; a value that fails
+// is dropped with a warning rather than handed to a scanner.
+if (phase === "invasion") {
+  const provided = Array.isArray(targetList) ? targetList : [];
+  const urls = provided.filter((raw) => {
+    const ok = typeof raw === "string" && validUrl(raw);
+    if (!ok) console.warn(`dropping invalid invasion target: ${String(raw)}`);
+    return ok;
+  });
+  if (urls.length === 0) {
+    // Nothing left to scan. Report through the callback error path — the same
+    // shape used when every tool fails — instead of running zero tools and
+    // completing a scan that did nothing.
+    const reason = `no valid invasion targets (${provided.length} supplied)`;
+    console.error(reason);
+    await postCallback(JSON.stringify({ error: reason }));
+    process.exit(1);
+  }
+  fs.writeFileSync(`${OUT}/urls.txt`, urls.join("\n") + "\n");
+}
+
 for (const tool of tools) {
   const argv = tool.args.map(resolve);
+  // The ZAP image runs as its non-root `zap` user, which must be able to write
+  // the host-mounted output directory or the report never lands.
+  const isZap = tool.name.startsWith("zap-");
+  if (isZap) fs.chmodSync(OUT, 0o777);
   console.log(`=== Running ${tool.name} (${tool.image}) ===`);
   const res = spawnSync("docker", ["run", "--rm", "-v", `${OUT}:/out`, tool.image, ...argv], { stdio: "inherit" });
-  if (res.status !== 0) failures.push(tool.name);
 
   const file = outputPath(argv);
-  if (!file || !fs.existsSync(file)) continue;
+  const fileExists = Boolean(file && fs.existsSync(file));
+  // ZAP exit 0/1/2 mean pass/warn/fail-with-findings, not tool failure; the
+  // report file is the real success signal. Any other code is a failure.
+  const ok = isZap ? [0, 1, 2].includes(res.status) && fileExists : res.status === 0;
+  if (!ok) failures.push(tool.name);
+  if (!fileExists) continue;
   const raw = fs.readFileSync(file, "utf8");
   let data;
   if (tool.outputFormat === "text") data = raw;
   else if (tool.outputFormat === "sarif") data = JSON.parse(raw);
+  // ZAP's -J report is one JSON document; the explore JSONL tools write one
+  // object per line. Per-line parsing would hand zap-json an empty array.
+  else if (isZap) data = JSON.parse(raw);
   else data = raw.split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   if (tool.name === "subfinder" && Array.isArray(data)) {
     for (const e of data) if (e && typeof e.host === "string") hosts.add(e.host);
@@ -141,10 +216,5 @@ const body = artifacts.length === 0 && failures.length > 0
   ? JSON.stringify({ error: `tools failed: ${failures.join(", ")}` })
   : JSON.stringify({ artifacts, failures, truncated });
 
-const res = await fetch(callbackUrl, {
-  method: "POST",
-  headers: { authorization: `Bearer ${callbackToken}`, "content-type": "application/json" },
-  body,
-});
-console.log("callback", res.status);
+const res = await postCallback(body);
 if (!res.ok) process.exit(1);
