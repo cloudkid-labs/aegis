@@ -69,6 +69,7 @@ import "../styles/aegis.css";
       <section id="list-section">
         <h2>History</h2>
         <div id="filters" role="group" aria-label="History filters">
+          <input id="scan-search" type="search" placeholder="Search scans" aria-label="Search scans" autocomplete="off" />
           <select id="filter-phase" aria-label="Filter by phase">
             <option value="">All phases</option>
             <option value="explore">Explore</option>
@@ -101,6 +102,10 @@ import "../styles/aegis.css";
         </div>
         <div id="detail-meta"></div>
         <h3>Discovered assets</h3>
+        <div class="detail-toolbar">
+          <input id="asset-search" type="search" placeholder="Search assets" aria-label="Search assets" autocomplete="off" />
+          <p id="asset-count" role="status"></p>
+        </div>
         <div class="table-wrap">
           <table id="assets-table">
             <thead>
@@ -122,6 +127,8 @@ import "../styles/aegis.css";
       // built with createElement/textContent only — no innerHTML, ever.
       // The same-origin session cookie authenticates the API; no key is stored
       // client side. Headless automation uses the Bearer API key server-side.
+      import { matchesQuery } from "../client/search";
+
       async function api(path, opts = {}) {
         const res = await fetch(path, { ...opts, headers: { "content-type": "application/json", ...(opts.headers || {}) } });
         if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
@@ -144,6 +151,12 @@ import "../styles/aegis.css";
       let lastSig = null;
       let placeholder = null;
       let detailId = null;
+      // Search filters what is already loaded, so typing never refetches: the
+      // last response is kept and re-filtered by renderScans/renderAssets.
+      let scanCache = [];
+      let scanError = null;
+      let detailAssets = [];
+      let lastAssetSig = null;
 
       function setText(td, text) {
         const s = String(text);
@@ -205,24 +218,33 @@ import "../styles/aegis.css";
       }
 
       async function loadScans(force = false) {
-        const phaseFilter = document.querySelector("#filter-phase").value;
-        const statusFilter = document.querySelector("#filter-status").value;
-        let list = [];
-        let error = null;
         try {
           const { scans } = await api("/api/scans");
-          list = scans.filter((s) => (!phaseFilter || s.phase === phaseFilter) && (!statusFilter || s.status === statusFilter));
-        } catch (err) { error = String(err.message); }
+          scanCache = scans;
+          scanError = null;
+        } catch (err) { scanError = String(err.message); }
+        renderScans(force);
+      }
 
-        const sig = JSON.stringify([phaseFilter, statusFilter, error, list.map((s) => [s.id, s.target, s.phase, s.status, s.assetCount ?? null, s.createdAt])]);
+      function renderScans(force = false) {
+        const phaseFilter = document.querySelector("#filter-phase").value;
+        const statusFilter = document.querySelector("#filter-status").value;
+        const query = document.querySelector("#scan-search").value;
+        const list = scanError ? [] : scanCache.filter((s) =>
+          (!phaseFilter || s.phase === phaseFilter) &&
+          (!statusFilter || s.status === statusFilter) &&
+          matchesQuery(query, [s.target, s.id, s.phase, s.status]));
+
+        const sig = JSON.stringify([phaseFilter, statusFilter, query, scanError, list.map((s) => [s.id, s.target, s.phase, s.status, s.assetCount ?? null, s.createdAt])]);
         if (!force && sig === lastSig) return; // unchanged: no DOM writes at all
         lastSig = sig;
 
         const tbody = document.querySelector("#scans-table tbody");
-        if (error || list.length === 0) {
+        if (scanError || list.length === 0) {
           for (const [, row] of scanRows) row.tr.remove();
           scanRows.clear();
-          showPlaceholder(tbody, error || "No scans yet.");
+          const empty = query.trim() ? `No scans match "${query.trim()}".` : "No scans yet.";
+          showPlaceholder(tbody, scanError || empty);
           return;
         }
         hidePlaceholder();
@@ -243,6 +265,7 @@ import "../styles/aegis.css";
       }
 
       async function showDetail(id) {
+        if (detailId !== id) document.querySelector("#asset-search").value = "";
         detailId = id;
         document.querySelector("#list-section").hidden = true;
         document.querySelector("#create-section").hidden = true;
@@ -256,20 +279,44 @@ import "../styles/aegis.css";
         meta.append(el("p", `${scan.target} | ${scan.phase} | ${scan.status} | ${scan.createdAt}`));
         for (const ev of events || []) meta.append(el("p", `${ev.createdAt} — ${ev.event}${ev.detail ? ": " + ev.detail : ""}`));
         const { assets } = await api(`/api/scans/${id}/assets`);
+        detailAssets = assets;
+        lastAssetSig = null;
+        renderAssets();
+      }
+
+      function assetMeta(a) {
+        if (!a.metadata) return "";
+        try {
+          const m = JSON.parse(a.metadata);
+          return Object.entries(m).filter(([, v]) => v != null).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`).join(" | ");
+        } catch { return ""; }
+      }
+
+      function renderAssets() {
+        const query = document.querySelector("#asset-search").value;
+        // Match the metadata as rendered, so searching "200" or a tech name
+        // finds the row the operator can actually see.
+        const rows = detailAssets
+          .map((a) => ({ asset: a, meta: assetMeta(a) }))
+          .filter(({ asset, meta }) => matchesQuery(query, [asset.type, asset.value, meta]));
+        const sig = JSON.stringify([query, rows.map(({ asset }) => asset.id)]);
+        if (sig === lastAssetSig) return;
+        lastAssetSig = sig;
+
         const tbody = document.querySelector("#assets-table tbody");
         clear(tbody);
-        for (const a of assets) {
+        for (const { asset, meta } of rows) {
           const tr = el("tr");
-          let metaStr = "";
-          if (a.metadata) { try { const m = JSON.parse(a.metadata); metaStr = Object.entries(m).filter(([, v]) => v != null).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`).join(" | "); } catch {} }
-          tr.append(el("td", a.type), el("td", a.value), el("td", metaStr));
+          tr.append(el("td", asset.type), el("td", asset.value), el("td", meta));
           tbody.append(tr);
         }
-        if (assets.length === 0) {
+        if (rows.length === 0) {
           const tr = el("tr");
-          tr.append(el("td", "No assets discovered.", { colspan: "3" }));
+          tr.append(el("td", detailAssets.length === 0 ? "No assets discovered." : "No assets match.", { colspan: "3" }));
           tbody.append(tr);
         }
+        document.querySelector("#asset-count").textContent =
+          detailAssets.length === 0 ? "" : `${rows.length} of ${detailAssets.length} assets`;
       }
 
       async function bootstrap() {
@@ -320,6 +367,8 @@ import "../styles/aegis.css";
 
       document.querySelector("#filter-phase").addEventListener("change", () => loadScans(true));
       document.querySelector("#filter-status").addEventListener("change", () => loadScans(true));
+      document.querySelector("#scan-search").addEventListener("input", () => renderScans(true));
+      document.querySelector("#asset-search").addEventListener("input", renderAssets);
       bootstrap();
       // Poll only while the list is on screen and the tab is visible; a hidden
       // tab must not keep fetching and repainting in the background.

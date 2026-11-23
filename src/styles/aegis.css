@@ -360,6 +360,12 @@ fieldset label:has(input:focus-visible) { outline: 2px solid hsl(var(--ring)); o
 /* filters — a right-aligned toolbar over the table */
 #filters { display: flex; flex-wrap: wrap; gap: var(--sp-2); justify-content: flex-end; margin-bottom: var(--sp-3); }
 #filters select { min-width: 148px; min-height: 40px; font-size: 0.82rem; }
+#filters input[type="search"] { flex: 1 1 220px; min-width: 0; min-height: 40px; font-size: 0.82rem; }
+
+/* asset search — same toolbar shape, with a live match count beside it */
+.detail-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.detail-toolbar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.detail-toolbar [role="status"] { margin: 0; font-size: 0.8rem; color: hsl(var(--faint)); font-variant-numeric: tabular-nums; }
 
 /* tables — glass containment; only light separates the rows */
 .table-wrap {

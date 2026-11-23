@@ -48,6 +48,24 @@ describe("Astro static output via ASSETS", () => {
     expect(js).toContain("textContent");
   });
 
+  it("ships a search input for the history table and for the assets table", async () => {
+    const html = await (await SELF.fetch("https://aegis.test/")).text();
+    for (const id of ["scan-search", "asset-search"]) {
+      // A toolbar search box has no visible label, so the accessible name has
+      // to come from aria-label; type="search" gives the native clear button.
+      expect(html).toMatch(
+        new RegExp(`<input(?=[^>]*id="${id}")(?=[^>]*type="search")(?=[^>]*aria-label=)[^>]*>`),
+      );
+    }
+  });
+
+  it("wires both search inputs into the dashboard script", async () => {
+    const html = await (await SELF.fetch("https://aegis.test/")).text();
+    const src = html.match(/<script type="module" src="([^"]+)"/)?.[1];
+    const js = await (await SELF.fetch(`https://aegis.test${src}`)).text();
+    for (const id of ["scan-search", "asset-search"]) expect(js).toContain(id);
+  });
+
   it("serves the built 404 page with a 404 status", async () => {
     const res = await SELF.fetch("https://aegis.test/does-not-exist");
     expect(res.status).toBe(404);
