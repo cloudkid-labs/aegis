@@ -116,6 +116,35 @@ describe("selectInvasionTargets", () => {
     ]);
   });
 
+  it("reports the earliest failing rule when an asset fails more than one", () => {
+    // Every row below fails the rule named by its expected reason AND a later
+    // rule, so swapping any adjacent pair of rules in selectInvasionTargets
+    // changes a reason here and turns this test red.
+    const sel = selectInvasionTargets([
+      // not-url + malformed: "x.example" has no scheme.
+      A("not-url", "subdomain", "x.example", '{"status_code":200}'),
+      // malformed + not-live: a katana source position on a dead URL.
+      A("malformed", "url", "https://x.example/a.js:1:240", '{"status_code":404}'),
+      // not-live + cdn-cgi.
+      A("cdn-cgi-dead", "url", "https://x.example/cdn-cgi/trace", '{"status_code":404}'),
+      // not-live + static-asset.
+      A("static-dead", "url", "https://x.example/app.css", '{"status_code":404}'),
+      // Kept, and seeds the key "/app.js": the trailing slash defeats the
+      // static-asset extension test, so the bare file below fails BOTH the
+      // static-asset rule and the duplicate rule. Do not "tidy" this row away:
+      // it is the only fixture that pins rule 5 ahead of rule 6.
+      A("static-trailing-slash", "url", "https://x.example/app.js/", '{"status_code":200}'),
+      // static-asset + duplicate.
+      A("static-duplicate", "url", "https://x.example/app.js", '{"status_code":200}'),
+      // cdn-cgi + static-asset.
+      A("cdn-cgi-live", "url", "https://x.example/cdn-cgi/scripts/x.js", '{"status_code":200}'),
+    ]);
+    expect(sel.targets.map((t) => t.url)).toEqual(["https://x.example/app.js/"]);
+    expect(sel.excluded.map((e) => e.reason)).toEqual([
+      "not-url", "malformed", "not-live", "not-live", "static-asset", "cdn-cgi",
+    ]);
+  });
+
   it("keeps distinct search strings and path case, folding only trailing slashes", () => {
     const sel = selectInvasionTargets([
       A("a", "url", "https://x.example/login", '{"status_code":200}'),
