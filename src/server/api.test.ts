@@ -556,7 +556,7 @@ function finding(scanId: string, id: string, severity: Severity, createdAt: stri
 
 describe("invasion create validation", () => {
   it("rejects a create without a confirmed authorization", async () => {
-    for (const authorization of [undefined, { confirmed: false }, { confirmed: "true" as unknown as boolean }]) {
+    for (const authorization of [undefined, { confirmed: false }, { confirmed: "true" }]) {
       const { env, store, doCalls } = harness();
       await seedParent(store);
       const app = createApiApp(() => store);
