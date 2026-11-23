@@ -600,6 +600,97 @@ tbody td[colspan] {
 }
 #detail-meta p:first-child { color: hsl(var(--fg)); font-weight: 600; }
 
+/* findings — a table inside the detail panel, so no second glass surface */
+#findings-section { margin-top: var(--sp-6); }
+#findings-table { table-layout: fixed; }
+#findings-table th:nth-child(1) { width: 92px; }
+#findings-table th:nth-child(2) { width: 116px; }
+#findings-table th:nth-child(4) { width: 34%; }
+#findings-table td:nth-child(2) {
+  font-family: var(--font-mono); font-size: 0.78rem; color: hsl(var(--muted));
+}
+#findings-table td:nth-child(4) {
+  font-family: var(--font-mono); font-size: 0.78rem;
+  color: hsl(var(--muted)); overflow-wrap: anywhere;
+}
+#findings-table tbody tr.finding-row { cursor: pointer; }
+/* The title doubles as the disclosure control; it must not inherit the
+   primary-button chrome from the global button rule. */
+#findings-table .finding-title {
+  font: inherit; font-weight: 600; color: hsl(var(--fg));
+  background: none; border: 0; box-shadow: none;
+  padding: 0; min-height: 0; text-align: left; cursor: pointer;
+}
+#findings-table tr.finding-detail > td {
+  padding: var(--sp-3) var(--sp-4);
+  background-color: hsl(var(--glass-bg-input));
+}
+.finding-detail-list {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-4); margin: 0;
+  font-size: 0.8rem;
+}
+.finding-detail-list dt { color: hsl(var(--faint)); font-size: 0.72rem; }
+.finding-detail-list dd { margin: 0; color: hsl(var(--muted)); overflow-wrap: anywhere; }
+
+/* severity chip: the word carries the state, colour only reinforces it */
+.severity-chip {
+  display: inline-block; padding: 2px var(--sp-2);
+  border: 1px solid hsl(var(--glass-edge)); border-radius: var(--r-chip);
+  background-color: hsl(var(--glass-chip));
+  font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; line-height: 1.4;
+}
+.severity-critical, .severity-high {
+  color: hsl(var(--danger)); border-color: hsl(var(--danger) / 0.42);
+  background-color: hsl(var(--danger) / 0.1);
+}
+.severity-medium {
+  color: hsl(var(--warn)); border-color: hsl(var(--warn) / 0.42);
+  background-color: hsl(var(--warn) / 0.1);
+}
+.severity-low {
+  color: hsl(var(--ok)); border-color: hsl(var(--ok) / 0.42);
+  background-color: hsl(var(--ok) / 0.1);
+}
+.severity-info { color: hsl(var(--muted)); }
+
+/* invasion confirm — one panel, one primary action */
+#invasion-confirm h3 { margin-top: var(--sp-4); }
+.target-list {
+  display: grid; gap: var(--sp-1);
+  max-height: 300px; overflow-y: auto; scrollbar-width: thin;
+  padding: var(--sp-3);
+  border: 1px solid hsl(var(--glass-edge-soft)); border-radius: var(--r-control);
+  background-color: hsl(var(--glass-bg-input));
+  box-shadow: var(--shadow-input);
+}
+.target-choice {
+  display: flex; align-items: baseline; gap: var(--sp-2);
+  min-width: 0; padding: var(--sp-1) 0;
+  font-size: 0.8rem; color: hsl(var(--muted)); cursor: pointer;
+}
+.target-choice input[type="checkbox"] {
+  flex: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0;
+  accent-color: hsl(var(--accent));
+  background: none; border: 0; box-shadow: none;
+}
+.target-choice.excluded { cursor: default; color: hsl(var(--faint)); }
+.target-url {
+  font-family: var(--font-mono); font-size: 0.76rem;
+  overflow-wrap: anywhere; min-width: 0;
+}
+.target-meta, .target-reason { font-size: 0.72rem; color: hsl(var(--faint)); white-space: nowrap; }
+.target-reason { color: hsl(var(--warn)); }
+.invasion-warning {
+  margin: var(--sp-3) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid hsl(var(--warn) / 0.42); border-radius: var(--r-control);
+  background-color: hsl(var(--warn) / 0.08);
+  color: hsl(var(--warn)); font-size: 0.82rem; font-weight: 600;
+}
+.invasion-field { display: grid; gap: var(--sp-2); margin-top: var(--sp-4); max-width: 320px; }
+#invasion-confirm .actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-4); }
+
 /* 404 — same glass shell, one calm statement */
 .notfound {
   width: min(100%, 520px); margin: var(--sp-12) auto 0;
@@ -642,6 +733,11 @@ footer span:first-child { color: hsl(var(--muted)); }
     background-color: hsl(var(--glass-chip-hover));
   }
   tbody tr:hover { background-color: hsl(var(--glass-row-hover)); }
+  /* The title is a button for the keyboard, not a control with chrome. */
+  #findings-table .finding-title:hover {
+    background-color: transparent; color: hsl(var(--accent)); box-shadow: none;
+  }
+  .target-choice:hover { color: hsl(var(--fg)); }
   main a:not(.button-link):hover { text-decoration-color: hsl(var(--accent)); }
   main .tool-roster a:hover { text-decoration: underline; }
 }
@@ -666,6 +762,13 @@ footer span:first-child { color: hsl(var(--muted)); }
   .field-submit button { width: 100%; }
   #filters { justify-content: stretch; }
   #filters select { flex: 1; min-width: 0; }
+  /* Findings drop the tool column on narrow screens: severity and title
+     identify the row, the URL wraps, and the tool stays a filter choice. */
+  #findings-table th:nth-child(2), #findings-table td:nth-child(2) { display: none; }
+  #findings-table th:nth-child(4) { width: 30%; }
+  .finding-detail-list { grid-template-columns: minmax(0, 1fr); }
+  .finding-detail-list dt { margin-top: var(--sp-2); }
+  #invasion-confirm .actions button { flex: 1 1 auto; }
   footer { justify-content: flex-start; }
 }
 
