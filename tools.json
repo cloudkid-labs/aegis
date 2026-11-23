@@ -24,7 +24,7 @@
       "name": "alterx",
       "phase": "explore",
       "executor": "github",
-      "image": "projectdiscovery/alterx:v0.2.0",
+      "image": "projectdiscovery/alterx:v0.0.6",
       "args": ["-l", "{{hosts}}", "-o", "/out/alterx.txt"],
       "outputFormat": "text",
       "outputType": "assets",
