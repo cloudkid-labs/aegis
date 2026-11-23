@@ -1,5 +1,5 @@
 import type { Asset } from "../types";
-import { normalizeAlterx, normalizeDnsx, normalizeHttpx, normalizeKatana, normalizeNaabu, normalizeSubfinder } from "./explore";
+import { normalizeAlterxResolved, normalizeDnsx, normalizeHttpx, normalizeKatana, normalizeNaabu, normalizeSubfinder } from "./explore";
 
 type NormalizerFn = (data: unknown, scanId: string, now: string) => Promise<Asset[]>;
 
@@ -9,7 +9,7 @@ const NORMALIZERS: Record<string, NormalizerFn> = {
   "katana-jsonl": normalizeKatana,
   "dnsx-json": normalizeDnsx,
   "naabu-json": normalizeNaabu,
-  "alterx-text": normalizeAlterx,
+  "alterx-resolved": normalizeAlterxResolved,
 };
 
 export async function normalize(normalizerKey: string, data: unknown, scanId: string, now: string): Promise<Asset[]> {

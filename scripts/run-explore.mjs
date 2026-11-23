@@ -63,11 +63,20 @@ function outputPath(argv) {
 // large recon never 413s into a timeout with the single-use token already
 // consumed: fit what we can, truncate the rest, and report what was cut.
 const BUDGET = 4 * 1024 * 1024;
+// The raw wordlist rides along as evidence but must not eat the callback
+// budget: cap it and report the cut like any other truncation.
+const RAW_CAP = 200_000;
 let used = 0;
 const truncated = [];
-function addArtifact(name, format, data) {
-  const size = JSON.stringify(data).length;
-  if (used + size <= BUDGET) { used += size; artifacts.push({ tool: name, format, data }); return; }
+function addArtifact(name, format, data, raw) {
+  const rawSent = typeof raw === "string" ? raw.slice(0, RAW_CAP) : undefined;
+  if (typeof raw === "string" && raw.length > RAW_CAP) truncated.push(name);
+  const size = JSON.stringify(data).length + (rawSent ? rawSent.length : 0);
+  if (used + size <= BUDGET) {
+    used += size;
+    artifacts.push({ tool: name, format, data, ...(rawSent !== undefined ? { raw: rawSent } : {}) });
+    return;
+  }
   const remaining = BUDGET - used;
   let fit = null;
   if (Array.isArray(data)) {
@@ -102,6 +111,26 @@ for (const tool of tools) {
   if (tool.name === "subfinder" && Array.isArray(data)) {
     for (const e of data) if (e && typeof e.host === "string") hosts.add(e.host);
     writeHosts();
+  }
+  // resolveWith: the tool's output is a wordlist, not a discovery. Run the
+  // resolver over it and store only what actually resolved; the wordlist
+  // itself rides along as raw evidence for R2.
+  if (tool.resolveWith) {
+    const resolver = registry.tools.find((t) => t.name === tool.resolveWith);
+    const containerIn = file.replace(OUT, "/out");
+    const resolvedOut = `/out/${tool.name}-resolved.json`;
+    const rargv = resolver.args.map((a) => a.replaceAll("{{hosts}}", containerIn)).map(resolve);
+    for (let i = 0; i < rargv.length - 1; i++) {
+      if (["-o", "--output"].includes(rargv[i])) rargv[i + 1] = resolvedOut;
+    }
+    console.log(`=== Resolving ${tool.name} output with ${resolver.name} (${resolver.image}) ===`);
+    const rres = spawnSync("docker", ["run", "--rm", "-v", `${OUT}:/out`, resolver.image, ...rargv], { stdio: "inherit" });
+    const rfile = resolvedOut.replace(/^\/out\//, `${OUT}/`);
+    if (rres.status !== 0 || !fs.existsSync(rfile)) { failures.push(tool.name); continue; }
+    const resolved = fs.readFileSync(rfile, "utf8").split("\n").filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    addArtifact(tool.name, "json", resolved, raw);
+    continue;
   }
   addArtifact(tool.name, tool.outputFormat, data);
 }

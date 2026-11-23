@@ -109,6 +109,28 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       expect(rows.find((r) => r.id === "count-empty")!.assetCount).toBe(0);
     });
 
+    it("listAssets hides stored alterx candidates", async () => {
+      const store = make();
+      await store.create(rec("cand-scan"));
+      await store.insertAssets([
+        asset("cand-guess", "cand-scan", { metadata: '{"source":"alterx","candidate":true}' }),
+        asset("cand-real", "cand-scan", { metadata: '{"resolved":true}' }),
+      ]);
+      const rows = await store.listAssets("cand-scan");
+      expect(rows.map((r) => r.id)).toEqual(["cand-real"]);
+    });
+
+    it("asset counts exclude stored alterx candidates", async () => {
+      const store = make();
+      await store.create(rec("cand-count"));
+      await store.insertAssets([
+        asset("cand-c1", "cand-count", { metadata: '{"source":"alterx","candidate":true}' }),
+        asset("cand-c2", "cand-count", { metadata: null }),
+      ]);
+      const rows = await store.list(1000);
+      expect(rows.find((r) => r.id === "cand-count")!.assetCount).toBe(1);
+    });
+
     it("setStatus applies patch fields", async () => {
       const store = make();
       await store.create(rec("status"));

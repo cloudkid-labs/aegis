@@ -7,7 +7,7 @@ import type { Asset } from "../types";
 
 const CALLBACK_BODY_LIMIT = 5 * 1024 * 1024;
 
-interface Artifact { tool: string; format: string; data: unknown }
+interface Artifact { tool: string; format: string; data: unknown; raw?: string }
 
 export async function handleCallback(req: Request, env: Env, store: ScanStore, scanId: string): Promise<Response> {
   const rec = await store.get(scanId);
@@ -36,8 +36,15 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
   const allAssets: Asset[] = [];
 
   for (const artifact of artifacts ?? []) {
-    const rawRef = `scans/${scanId}/raw/${artifact.tool}-${Date.now()}.json`;
-    await env.ARTIFACTS.put(rawRef, typeof artifact.data === "string" ? artifact.data : JSON.stringify(artifact.data), { httpMetadata: { contentType: "application/json" } });
+    // A resolved tool (alterx) sends the verification records as data and its
+    // original wordlist as raw: the wordlist is the evidence, kept verbatim.
+    const isRawText = typeof artifact.raw === "string";
+    const rawRef = `scans/${scanId}/raw/${artifact.tool}-${Date.now()}.${isRawText ? "txt" : "json"}`;
+    await env.ARTIFACTS.put(
+      rawRef,
+      isRawText ? artifact.raw! : typeof artifact.data === "string" ? artifact.data : JSON.stringify(artifact.data),
+      { httpMetadata: { contentType: isRawText ? "text/plain" : "application/json" } },
+    );
 
     const tool = getTool(artifact.tool);
     const normalizerKey = tool?.normalizer ?? `${artifact.tool}-${artifact.format}`;

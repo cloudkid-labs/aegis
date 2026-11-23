@@ -54,6 +54,9 @@ export interface ToolEntry {
   normalizer: string;
   /** Opt-in tools (naabu, alterx) are skipped unless explicitly selected. */
   default?: boolean;
+  /** Name of another registry entry whose resolution pass verifies this
+   *  tool's output before it is stored (alterx permutations -> dnsx). */
+  resolveWith?: string;
 }
 
 /**
