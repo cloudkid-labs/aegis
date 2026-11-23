@@ -50,7 +50,7 @@
 		// Google sign-in. GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are wrangler
 		// secrets (not vars). An empty allowlist admits no one, so sign-in stays
 		// locked until AEGIS_ALLOWED_EMAILS lists the operator's Google email(s).
-		"AEGIS_ALLOWED_EMAILS": ""
+		"AEGIS_ALLOWED_EMAILS": "rainiersvn1@gmail.com"
 	},
 	// No `remote: true`: wrangler dev and the workers vitest project must use a
 	// LOCAL D1/R2, never production. Tests apply migrations and write scans.
