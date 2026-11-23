@@ -59,6 +59,8 @@
 		"GITHUB_OWNER": "cloudkid-labs",
 		"GITHUB_REPO": "aegis",
 		"GITHUB_WORKFLOW": "aegis-explore.yml",
+		// The phases are separate workflow files; the invasion one takes `targets`.
+		"GITHUB_WORKFLOW_INVASION": "aegis-invasion.yml",
 		"AEGIS_ORIGIN": "https://aegis.cloudkid.link",
 		// Google sign-in. GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are wrangler
 		// secrets (not vars). An empty allowlist admits no one, so sign-in stays

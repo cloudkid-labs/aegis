@@ -16,8 +16,9 @@ const OUTPUT_FORMATS: readonly OutputFormat[] = ["json", "jsonl", "text", "sarif
 const OUTPUT_TYPES: readonly OutputType[] = ["assets", "findings"];
 
 // A slug, not a ToolName membership check: the union in types.ts documents
-// the Phase 1 tools, while a new tools.json entry should work without a type
-// edit. Anything else (empty, uppercase, spaces, `__proto__`) is rejected.
+// the tools typed code may name, while a new tools.json entry should work
+// without a type edit. Anything else (empty, uppercase, spaces, `__proto__`)
+// is rejected.
 const TOOL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 function fail(where: string, message: string): never {

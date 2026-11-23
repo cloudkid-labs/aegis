@@ -29,12 +29,13 @@ jobs:
       # Tool images are large and re-pulled every run otherwise. Cache the
       # docker save tarball keyed on tools.json so a version bump invalidates
       # it; a hit loads locally and the run step never touches the registry.
+      # Per-phase key: explore and invasion pull different images.
       - name: Cache tool images
         id: image-cache
         uses: actions/cache@v4
         with:
           path: /tmp/aegis-images.tar
-          key: aegis-tool-images-${{ hashFiles('tools.json') }}
+          key: aegis-tool-images-explore-${{ hashFiles('tools.json') }}
 
       - name: Load cached tool images
         if: steps.image-cache.outputs.cache-hit == 'true'
@@ -57,7 +58,7 @@ jobs:
           OPTIONS_JSON: ${{ inputs.options }}
           CB_URL: ${{ inputs.callback_url }}
           CB_TOKEN: ${{ inputs.callback_token }}
-        run: node scripts/run-explore.mjs
+        run: node scripts/run-scan.mjs
 
       - name: Save tool images for future runs
         if: always() && steps.image-cache.outputs.cache-hit != 'true'

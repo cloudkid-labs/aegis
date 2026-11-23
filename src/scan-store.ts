@@ -1,6 +1,6 @@
 import { CANDIDATE_MARKER } from "./normalizers/explore";
 import type {
-  Asset, ExecutorName, Finding, ScanEvent, ScanRecord, ScanStatus,
+  Asset, ExecutorName, Finding, ScanAuthorization, ScanEvent, ScanRecord, ScanStatus,
 } from "./types";
 
 /**
@@ -21,12 +21,27 @@ export interface ScanStore {
   transition(id: string, allowed: ScanStatus[], to: ScanStatus, patch?: ScanStatusPatch): Promise<boolean>;
   /** Atomically flip the oldest queued scan for one executor to running. */
   claimOldest(executor: ExecutorName, now: string): Promise<ScanRecord | null>;
+  /**
+   * Insert a scan only when no sibling under the same `parentScanId` is queued
+   * or running. Check and insert are one statement, so two retries of one scan
+   * cannot both create an active copy even after both read the failed row: the
+   * guard holds for the whole dispatch window, not just the status read.
+   * Returns false when an active child exists and nothing was inserted.
+   */
+  createIfNoActiveChild(rec: ScanRecord): Promise<boolean>;
   addEvent(scanId: string, event: string, detail?: string): Promise<void>;
   insertAssets(assets: Asset[]): Promise<void>;
   listAssets(scanId: string): Promise<Asset[]>;
   insertFindings(findings: Finding[]): Promise<void>;
   listFindings(scanId: string): Promise<Finding[]>;
   events(scanId: string): Promise<ScanEvent[]>;
+  /**
+   * Persist what the operator confirmed for an invasion scan. The scan id is
+   * the primary key: a duplicate insert throws, so a scan's authorization is
+   * immutable once written.
+   */
+  createAuthorization(rec: ScanAuthorization): Promise<void>;
+  getAuthorization(scanId: string): Promise<ScanAuthorization | null>;
 }
 
 export interface ScanStatusPatch {
@@ -81,6 +96,15 @@ interface FindingRow {
   created_at: string;
 }
 
+interface AuthorizationRow {
+  scan_id: string;
+  email: string;
+  targets: string;
+  tools: string;
+  active: number;
+  confirmed_at: string;
+}
+
 function toRecord(row: ScanRow): ScanRecord {
   return {
     id: row.id,
@@ -125,6 +149,30 @@ function toFinding(row: FindingRow): Finding {
     remediation: row.remediation,
     rawRef: row.raw_ref,
     createdAt: row.created_at,
+  };
+}
+
+/** D1 stores the lists as JSON text; callers get the arrays back. A row that
+ *  does not decode to two arrays was not written by createAuthorization
+ *  (corruption or a manual edit), so it reads as no authorization instead of
+ *  throwing on every retry and preview. */
+function toAuthorization(row: AuthorizationRow): ScanAuthorization | null {
+  let targets: unknown;
+  let tools: unknown;
+  try {
+    targets = JSON.parse(row.targets);
+    tools = JSON.parse(row.tools);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(targets) || !Array.isArray(tools)) return null;
+  return {
+    scanId: row.scan_id,
+    email: row.email,
+    targets: targets as string[],
+    tools: tools as string[],
+    active: row.active === 1,
+    confirmedAt: row.confirmed_at,
   };
 }
 
@@ -211,6 +259,27 @@ export function d1ScanStore(db: D1Database): ScanStore {
       return row ? toRecord(row) : null;
     },
 
+    async createIfNoActiveChild(rec) {
+      // One statement: the NOT EXISTS check and the insert cannot interleave,
+      // so a competing retry can never slip an active child in between. ?5 is
+      // parent_scan_id, reused by the subquery. A NULL parent never matches
+      // (?5 = NULL is never true), so a parentless record always inserts.
+      const res = await db
+        .prepare(
+          `INSERT INTO scans (${SCAN_COLS})
+           SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12
+            WHERE NOT EXISTS (
+              SELECT 1 FROM scans WHERE parent_scan_id=?5 AND status IN ('queued','running')
+            )`,
+        )
+        .bind(
+          rec.id, rec.target, rec.phase, rec.status, rec.parentScanId, rec.executor,
+          rec.externalUrl, rec.createdAt, rec.updatedAt, rec.completedAt, rec.error, rec.options,
+        )
+        .run();
+      return (res.meta?.changes ?? 0) > 0;
+    },
+
     async addEvent(scanId, event, detail) {
       await db
         .prepare("INSERT INTO scan_events (scan_id, event, detail, created_at) VALUES (?1,?2,?3,?4)")
@@ -269,6 +338,31 @@ export function d1ScanStore(db: D1Database): ScanStore {
         .bind(scanId)
         .all<{ event: string; detail: string | null; created_at: string }>();
       return results.map((row) => ({ event: row.event, detail: row.detail, createdAt: row.created_at }));
+    },
+
+    async createAuthorization(rec) {
+      // Plain INSERT on purpose: the primary key is the scan id, so a second
+      // authorization for one scan surfaces as a constraint error, not an
+      // overwrite of what the operator confirmed.
+      await db
+        .prepare(
+          "INSERT INTO scan_authorizations (scan_id, email, targets, tools, active, confirmed_at) VALUES (?1,?2,?3,?4,?5,?6)",
+        )
+        .bind(
+          rec.scanId, rec.email, JSON.stringify(rec.targets), JSON.stringify(rec.tools),
+          rec.active ? 1 : 0, rec.confirmedAt,
+        )
+        .run();
+    },
+
+    async getAuthorization(scanId) {
+      const row = await db
+        .prepare(
+          "SELECT scan_id, email, targets, tools, active, confirmed_at FROM scan_authorizations WHERE scan_id=?1",
+        )
+        .bind(scanId)
+        .first<AuthorizationRow>();
+      return row ? toAuthorization(row) : null;
     },
   };
 }

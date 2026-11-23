@@ -66,6 +66,35 @@ describe("Astro static output via ASSETS", () => {
     for (const id of ["scan-search", "asset-search"]) expect(js).toContain(id);
   });
 
+  it("wires the findings table and the invasion confirm panel", async () => {
+    const html = await (await SELF.fetch("https://aegis.test/")).text();
+    // Every id the client script looks up while rendering findings or building
+    // the confirm payload has to exist in the shell, signed in or not.
+    for (const id of [
+      "findings-section", "finding-severity", "finding-tool", "finding-search",
+      "findings-table", "invasion-confirm", "invasion-targets", "invasion-tools",
+      "invasion-severity", "invasion-active-note", "invasion-confirm-btn", "invasion-cancel-btn",
+    ]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    // Load-bearing copy: the operator has to know zap-full is an active attack
+    // and roughly what it costs in runtime.
+    expect(html).toContain(
+      "Active attack scanning: zap-full sends attack payloads at every selected URL. Expect up to 60 minutes.",
+    );
+
+    const src = html.match(/<script type="module" src="([^"]+)"/)?.[1];
+    expect(src).toBeTruthy();
+    const js = await (await SELF.fetch(`https://aegis.test${src}`)).text();
+    // Ids are referenced as selector strings, so minification cannot rename
+    // them; both panels dropping out of the script would be silent at runtime.
+    for (const id of ["findings-section", "invasion-confirm"]) expect(js).toContain(id);
+    // The findings count comes from the findings endpoint, and the confirm
+    // panel is populated from the preview endpoint.
+    expect(js).toContain("/findings");
+    expect(js).toContain("/invasion-preview");
+  });
+
   it("ships the decorative recon graph on the signed-out page", async () => {
     const html = await (await SELF.fetch("https://aegis.test/")).text();
     expect(html).toMatch(
@@ -87,8 +116,8 @@ describe("Astro static output via ASSETS", () => {
     for (const id of ["landing-pipeline", "landing-tooling", "landing-privacy"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    // The honesty line is load-bearing: Explore is shipped, Invasion is not.
-    expect(html).toContain("Explore is live; Invasion lands in Phase 2.");
+    // The honesty line is load-bearing: Explore and Invasion are shipped, Reporting is not.
+    expect(html).toContain("Explore and Invasion are live; Reporting lands in Phase 3.");
     expect(html).toContain('href="https://github.com/projectdiscovery/nuclei"');
     expect(html).toContain('href="https://www.zaproxy.org/"');
   });

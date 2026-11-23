@@ -10,9 +10,9 @@ export type ScanStatus = "queued" | "running" | "completed" | "failed" | "cancel
 export type ExecutorName = "github" | "selfhosted";
 
 /**
- * The Phase 1 tool set. A new registry entry still has to be added here to be
- * usable from typed code, but the registry validates by slug at runtime so
- * `tools.json` stays the source of truth for what actually runs.
+ * The tool set typed code may name. A new registry entry still has to be added
+ * here to be usable from typed code, but the registry validates by slug at
+ * runtime so `tools.json` stays the source of truth for what actually runs.
  */
 export type ToolName =
   | "subfinder"
@@ -22,7 +22,8 @@ export type ToolName =
   | "katana"
   | "naabu"
   | "nuclei"
-  | "zap-baseline";
+  | "zap-baseline"
+  | "zap-full";
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
@@ -125,4 +126,19 @@ export interface ScanEvent {
   event: string;
   detail: string | null;
   createdAt: string;
+}
+
+/**
+ * What an operator confirmed before an invasion scan may run: exactly these
+ * absolute URLs, scanned with exactly these tools. The scan id is the primary
+ * key, so the payload is written once and can never be re-authorized.
+ */
+export interface ScanAuthorization {
+  scanId: string;
+  email: string;
+  targets: string[];
+  tools: string[];
+  /** True iff the opt-in active ZAP profile was selected. */
+  active: boolean;
+  confirmedAt: string;
 }

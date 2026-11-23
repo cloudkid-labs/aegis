@@ -63,7 +63,16 @@ export const normalizeKatana = recordNormalizer({
   idKind: "endpoint",
   extract: (e) => {
     const url = (e.request as { endpoint?: string } | undefined)?.endpoint ?? (e.endpoint as string | undefined);
-    return url ? { value: url, metadata: null } : null;
+    if (!url) return null;
+    // katana nests the response under `response` (pkg/navigation/response.go:
+    // StatusCode int `json:"status_code,omitempty"`), never on the record
+    // root. Invasion selection treats a missing status as not-live, so
+    // dropping it here would exclude every katana endpoint.
+    const statusCode = (e.response as { status_code?: unknown } | undefined)?.status_code;
+    return {
+      value: url,
+      metadata: JSON.stringify({ status_code: typeof statusCode === "number" ? statusCode : null }),
+    };
   },
 });
 

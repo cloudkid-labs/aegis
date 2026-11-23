@@ -170,6 +170,47 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       expect((await store.get("claim-gh"))!.status).toBe("queued");
     });
 
+    it("createIfNoActiveChild inserts when the parent has no child", async () => {
+      const store = make();
+      const copy = rec("retry-first", { parentScanId: "retry-parent" });
+      expect(await store.createIfNoActiveChild(copy)).toBe(true);
+      expect(await store.get("retry-first")).toEqual(copy);
+    });
+
+    it("createIfNoActiveChild inserts under a null parent", async () => {
+      // SQL `parent_scan_id=?5` never matches NULL, so a record with no parent
+      // always inserts; the fake must mirror that rather than group nulls.
+      const store = make();
+      expect(await store.createIfNoActiveChild(rec("retry-orphan-a", { parentScanId: null }))).toBe(true);
+      expect(await store.createIfNoActiveChild(rec("retry-orphan-b", { parentScanId: null }))).toBe(true);
+    });
+
+    it("createIfNoActiveChild refuses while a queued child exists", async () => {
+      const store = make();
+      await store.create(rec("retry-queued-child", { parentScanId: "retry-parent-q", status: "queued" }));
+      const copy = rec("retry-copy-q", { parentScanId: "retry-parent-q" });
+      expect(await store.createIfNoActiveChild(copy)).toBe(false);
+      expect(await store.get("retry-copy-q")).toBeNull();
+    });
+
+    it("createIfNoActiveChild refuses while a running child exists", async () => {
+      const store = make();
+      await store.create(rec("retry-running-child", { parentScanId: "retry-parent-r", status: "running" }));
+      const copy = rec("retry-copy-r", { parentScanId: "retry-parent-r" });
+      expect(await store.createIfNoActiveChild(copy)).toBe(false);
+      expect(await store.get("retry-copy-r")).toBeNull();
+    });
+
+    it("createIfNoActiveChild inserts when the only child is terminal", async () => {
+      for (const status of ["completed", "failed", "cancelled"] as const) {
+        const store = make();
+        const parent = `retry-parent-${status}`;
+        await store.create(rec(`${parent}-child`, { parentScanId: parent, status }));
+        expect(await store.createIfNoActiveChild(rec(`${parent}-copy`, { parentScanId: parent }))).toBe(true);
+        expect(await store.get(`${parent}-copy`)).not.toBeNull();
+      }
+    });
+
     it("insertAssets stores assets scoped to a scan and is idempotent on id", async () => {
       const store = make();
       await store.create(rec("assets-a"));
@@ -250,6 +291,42 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
     it("transition on a missing scan returns false", async () => {
       const store = make();
       expect(await store.transition("trans-missing", ["queued"], "running")).toBe(false);
+    });
+
+    it("authorization roundtrips and is unique per scan", async () => {
+      const store = make();
+      await store.create(rec("auth-scan"));
+      const a = {
+        scanId: "auth-scan",
+        email: "op@example.com",
+        targets: ["https://x.example/"],
+        tools: ["nuclei"],
+        active: false,
+        confirmedAt: "2026-11-23T00:00:00.000Z",
+      };
+      await store.createAuthorization(a);
+      expect(await store.getAuthorization("auth-scan")).toEqual(a);
+      await expect(store.createAuthorization(a)).rejects.toThrow();
+      expect(await store.getAuthorization("missing")).toBeNull();
+    });
+
+    it("authorization preserves active and multi-entry lists", async () => {
+      // active: true is the zap-full opt-in: a write side stuck at 0 would
+      // silently downgrade the authorization, so it is asserted separately
+      // from the active: false case above. Two entries per list catch a
+      // serialiser that only carries the first.
+      const store = make();
+      await store.create(rec("auth-full"));
+      const a = {
+        scanId: "auth-full",
+        email: "zap@example.com",
+        targets: ["https://a.example/", "https://b.example:8443/"],
+        tools: ["nuclei", "zap-full"],
+        active: true,
+        confirmedAt: "2026-11-23T01:00:00.000Z",
+      };
+      await store.createAuthorization(a);
+      expect(await store.getAuthorization("auth-full")).toEqual(a);
     });
   });
 }

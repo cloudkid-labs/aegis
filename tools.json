@@ -68,20 +68,31 @@
       "phase": "invasion",
       "executor": "github",
       "image": "projectdiscovery/nuclei:v3.11.1",
-      "args": ["-u", "{{target}}", "-severity", "{{severity}}", "-sarif-export", "/out/nuclei.sarif", "-no-color"],
-      "outputFormat": "sarif",
+      "args": ["-l", "{{urls}}", "-severity", "{{severity}}", "-jsonl", "-o", "/out/nuclei.jsonl", "-no-color"],
+      "outputFormat": "jsonl",
       "outputType": "findings",
-      "normalizer": "nuclei-sarif"
+      "normalizer": "nuclei-jsonl"
     },
     {
       "name": "zap-baseline",
       "phase": "invasion",
       "executor": "github",
       "image": "ghcr.io/zaproxy/zaproxy:stable",
-      "args": ["zap-baseline.py", "-t", "{{target}}", "-J", "/out/zap.json"],
+      "args": ["zap-baseline.py", "-t", "{{target}}", "-J", "zap.json"],
       "outputFormat": "json",
       "outputType": "findings",
       "normalizer": "zap-json"
+    },
+    {
+      "name": "zap-full",
+      "phase": "invasion",
+      "executor": "github",
+      "image": "ghcr.io/zaproxy/zaproxy:stable",
+      "args": ["zap-full-scan.py", "-t", "{{target}}", "-J", "zap-full.json"],
+      "outputFormat": "json",
+      "outputType": "findings",
+      "normalizer": "zap-json",
+      "default": false
     }
   ]
 }

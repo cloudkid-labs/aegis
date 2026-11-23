@@ -115,7 +115,7 @@ import "../styles/aegis.css";
               <p class="step-body">Severity, evidence, remediation and a SARIF export per scan.</p>
             </li>
           </ol>
-          <p class="strip-note">Explore is live; Invasion lands in Phase 2.</p>
+          <p class="strip-note">Explore and Invasion are live; Reporting lands in Phase 3.</p>
         </div>
         <div class="landing-strip" id="landing-tooling">
           <h3>Open tooling</h3>
@@ -200,7 +200,7 @@ import "../styles/aegis.css";
         <div class="actions">
           <button id="back-btn">Back</button>
           <button id="retry-btn" hidden>Re-run</button>
-          <button id="invade-btn" disabled title="Available in Phase 2">Invoke invasion</button>
+          <button id="invade-btn" disabled title="Invasion needs a completed explore scan">Invoke invasion</button>
         </div>
         <div id="detail-meta"></div>
         <h3>Discovered assets</h3>
@@ -216,6 +216,64 @@ import "../styles/aegis.css";
             <tbody></tbody>
           </table>
         </div>
+        <!-- A block, not a <section>: the global section rule is the glass
+             panel chrome, and this block lives inside the detail panel. -->
+        <div id="findings-section" hidden>
+          <h3>Findings</h3>
+          <div class="detail-toolbar">
+            <select id="finding-severity" aria-label="Filter findings by severity">
+              <option value="">All severities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="info">Info</option>
+            </select>
+            <select id="finding-tool" aria-label="Filter findings by tool">
+              <option value="">All tools</option>
+            </select>
+            <input id="finding-search" type="search" placeholder="Search findings" aria-label="Search findings" autocomplete="off" />
+            <p id="finding-count" role="status"></p>
+          </div>
+          <div class="table-wrap">
+            <table id="findings-table">
+              <thead>
+                <tr><th scope="col">Severity</th><th scope="col">Tool</th><th scope="col">Title</th><th scope="col">URL</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <section id="invasion-confirm" hidden>
+        <h2>Invasion scan</h2>
+        <p id="invasion-summary" class="strip-note"></p>
+        <h3>Targets</h3>
+        <div id="invasion-targets" class="target-list" role="group" aria-label="Invasion target URLs"></div>
+        <h3>Tools</h3>
+        <fieldset id="invasion-tools">
+          <legend>Tools</legend>
+          <label><input type="checkbox" name="invasion-tool" value="nuclei" checked /> nuclei</label>
+          <label><input type="checkbox" name="invasion-tool" value="zap-baseline" checked /> zap-baseline</label>
+          <label><input type="checkbox" name="invasion-tool" value="zap-full" /> zap-full</label>
+        </fieldset>
+        <p id="invasion-active-note" class="invasion-warning" hidden>Active attack scanning: zap-full sends attack payloads at every selected URL. Expect up to 60 minutes.</p>
+        <div class="invasion-field">
+          <label class="field-label" for="invasion-severity">Nuclei severity filter</label>
+          <select id="invasion-severity">
+            <option value="critical,high,medium">Critical, high, medium (default)</option>
+            <option value="critical,high">Critical and high</option>
+            <option value="critical">Critical only</option>
+            <option value="critical,high,medium,low">Critical through low</option>
+            <option value="critical,high,medium,low,info">All severities</option>
+          </select>
+        </div>
+        <p class="strip-note">Confirming starts the scan immediately; this exact selection is stored with it. ZAP reports every risk it finds.</p>
+        <div class="actions">
+          <button id="invasion-confirm-btn">Confirm invasion</button>
+          <button id="invasion-cancel-btn" class="secondary">Cancel</button>
+        </div>
+        <p id="invasion-status" role="status"></p>
       </section>
     </main>
     <footer>
@@ -259,6 +317,13 @@ import "../styles/aegis.css";
       let scanError = null;
       let detailAssets = [];
       let lastAssetSig = null;
+      // Findings belong to one loaded invasion scan. The count the operator
+      // sees is derived from this endpoint payload, never from callback event
+      // text (a callback counts normalized findings, not unique rows).
+      let detailScan = null;
+      let detailFindings = [];
+      let findingsError = null;
+      const expandedFindings = new Set();
 
       function setText(td, text) {
         const s = String(text);
@@ -367,23 +432,73 @@ import "../styles/aegis.css";
       }
 
       async function showDetail(id) {
-        if (detailId !== id) document.querySelector("#asset-search").value = "";
+        if (detailId !== id) {
+          document.querySelector("#asset-search").value = "";
+          document.querySelector("#finding-search").value = "";
+          document.querySelector("#finding-severity").value = "";
+        }
         detailId = id;
+        expandedFindings.clear();
+        document.querySelector("#invasion-confirm").hidden = true;
         document.querySelector("#list-section").hidden = true;
         document.querySelector("#create-section").hidden = true;
         const detail = document.querySelector("#detail-section");
         detail.hidden = false;
         document.querySelector("#detail-title").textContent = `Scan ${id.slice(0, 8)}`;
+        // Until this scan's metadata lands, the panel must not act on the
+        // previous one: Invade would chain off the old scan and retry would
+        // re-run it. Clear the context synchronously, before the first await.
+        detailScan = null;
+        detailFindings = [];
+        findingsError = null;
+        detailAssets = [];
+        lastAssetSig = null;
+        renderAssets();
+        document.querySelector("#invade-btn").disabled = true;
+        document.querySelector("#retry-btn").hidden = true;
+        document.querySelector("#findings-section").hidden = true;
         const { scan, events } = await api(`/api/scans/${id}`);
+        // Every await below can outlive the view: fast View-A → Back → View-B
+        // leaves A's late response landing on B's panel (title says B, meta and
+        // assets say A, and Invade would chain a new scan off parent A). Each
+        // response is only applied while its id is still the one on screen.
+        if (detailId !== id) return;
+        detailScan = scan;
         document.querySelector("#retry-btn").hidden = !(scan.status === "failed" || scan.status === "cancelled");
+        // An invasion chains off exactly one thing: a completed explore scan.
+        const invade = document.querySelector("#invade-btn");
+        const canInvade = scan.phase === "explore" && scan.status === "completed";
+        invade.disabled = !canInvade;
+        invade.title = canInvade
+          ? "Pick this scan's live URLs and confirm the tools"
+          : "Invasion needs a completed explore scan";
         const meta = document.querySelector("#detail-meta");
         clear(meta);
         meta.append(el("p", `${scan.target} | ${scan.phase} | ${scan.status} | ${scan.createdAt}`));
         for (const ev of events || []) meta.append(el("p", `${ev.createdAt} — ${ev.event}${ev.detail ? ": " + ev.detail : ""}`));
         const { assets } = await api(`/api/scans/${id}/assets`);
+        if (detailId !== id) return;
         detailAssets = assets;
         lastAssetSig = null;
         renderAssets();
+
+        document.querySelector("#findings-section").hidden = scan.phase !== "invasion";
+        detailFindings = [];
+        findingsError = null;
+        if (scan.phase === "invasion") {
+          try {
+            const { findings } = await api(`/api/scans/${id}/findings`);
+            if (detailId !== id) return;
+            detailFindings = sortFindings(findings);
+          } catch (err) {
+            // A rejection is the same race: A's late failure must not paint an
+            // error over B's table.
+            if (detailId !== id) return;
+            findingsError = String(err.message);
+          }
+          buildToolFilter();
+        }
+        renderFindings();
       }
 
       function assetMeta(a) {
@@ -419,6 +534,189 @@ import "../styles/aegis.css";
         }
         document.querySelector("#asset-count").textContent =
           detailAssets.length === 0 ? "" : `${rows.length} of ${detailAssets.length} assets`;
+      }
+
+      // Findings: server order is severity rank then discovery time; sorting
+      // here too keeps the table meaningful even if a stored row predates it.
+      const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
+      function severityRank(severity) {
+        const rank = SEVERITY_ORDER.indexOf(severity);
+        return rank === -1 ? SEVERITY_ORDER.length : rank;
+      }
+      function sortFindings(findings) {
+        return [...findings].sort((a, b) =>
+          severityRank(a.severity) - severityRank(b.severity)
+          || String(a.createdAt).localeCompare(String(b.createdAt))
+          || String(a.id).localeCompare(String(b.id)));
+      }
+
+      function buildToolFilter() {
+        const select = document.querySelector("#finding-tool");
+        clear(select);
+        select.append(el("option", "All tools", { value: "" }));
+        for (const tool of [...new Set(detailFindings.map((f) => f.tool))].sort()) {
+          select.append(el("option", tool, { value: tool }));
+        }
+        select.value = "";
+      }
+
+      function findingDetail(f) {
+        const tr = el("tr", null, { class: "finding-detail", id: `finding-detail-${f.id}` });
+        const cell = el("td", null, { colspan: "4" });
+        const list = el("dl", null, { class: "finding-detail-list" });
+        const fields = [
+          ["Description", f.description],
+          ["Evidence", f.evidence],
+          ["Remediation", f.remediation],
+          ["CWE", f.cwe == null ? null : `CWE-${f.cwe}`],
+          ["Raw artifact", f.rawRef],
+        ];
+        for (const [label, value] of fields) {
+          // Every value is rendered with textContent (see el); tool output is
+          // never markup.
+          if (value == null || String(value).trim() === "") continue;
+          list.append(el("dt", label), el("dd", value));
+        }
+        if (!list.firstChild) list.append(el("dt", "Details"), el("dd", "No further detail recorded."));
+        cell.append(list);
+        tr.append(cell);
+        return tr;
+      }
+
+      function toggleFinding(f, detail, button) {
+        const open = !expandedFindings.has(f.id);
+        if (open) expandedFindings.add(f.id);
+        else expandedFindings.delete(f.id);
+        // The detail row stays in the DOM so aria-controls always resolves;
+        // [hidden] keeps it out of layout and the accessibility tree.
+        detail.hidden = !open;
+        button.setAttribute("aria-expanded", String(open));
+      }
+
+      function findingRow(f) {
+        const tr = el("tr", null, { class: "finding-row" });
+        const severityCell = el("td");
+        severityCell.append(el("span", f.severity, { class: `severity-chip severity-${f.severity}` }));
+        const titleCell = el("td");
+        const button = el("button", f.title || "Untitled finding", {
+          class: "finding-title", type: "button",
+          "aria-expanded": "false",
+          "aria-controls": `finding-detail-${f.id}`,
+        });
+        titleCell.append(button);
+        tr.append(severityCell, el("td", f.tool), titleCell, el("td", f.url));
+        const detail = findingDetail(f);
+        // The row click is the brief's affordance; the title button is the
+        // keyboard path. stopPropagation keeps one click from toggling twice.
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          toggleFinding(f, detail, button);
+        });
+        tr.addEventListener("click", () => toggleFinding(f, detail, button));
+        return { tr, detail, button };
+      }
+
+      function renderFindings() {
+        const severity = document.querySelector("#finding-severity").value;
+        const tool = document.querySelector("#finding-tool").value;
+        const query = document.querySelector("#finding-search").value;
+        const rows = detailFindings.filter((f) =>
+          (!severity || f.severity === severity)
+          && (!tool || f.tool === tool)
+          && matchesQuery(query, [f.title, f.url, f.tool, f.evidence]));
+
+        const tbody = document.querySelector("#findings-table tbody");
+        clear(tbody);
+        for (const finding of rows) {
+          const { tr, detail, button } = findingRow(finding);
+          const open = expandedFindings.has(finding.id);
+          detail.hidden = !open;
+          button.setAttribute("aria-expanded", String(open));
+          tbody.append(tr, detail);
+        }
+        if (rows.length === 0) {
+          const tr = el("tr");
+          const text = findingsError
+            ? `Could not load findings: ${findingsError}`
+            : detailFindings.length === 0 ? "No findings recorded." : "No findings match.";
+          tr.append(el("td", text, { colspan: "4" }));
+          tbody.append(tr);
+        }
+        document.querySelector("#finding-count").textContent = detailFindings.length === 0
+          ? ""
+          : `${rows.length} of ${detailFindings.length} findings`;
+      }
+
+      // Invasion confirm. The preview is the server's own selection, so the
+      // checkboxes and the payload can never drift from the server's subset
+      // check; excluded URLs are shown with their reason and stay unticked.
+      let invasionParentId = null;
+
+      function renderInvasionTargets(preview) {
+        const box = document.querySelector("#invasion-targets");
+        clear(box);
+        for (const target of preview.targets) {
+          const label = el("label", null, { class: "target-choice" });
+          const check = el("input", null, { type: "checkbox", name: "invasion-target", value: target.url });
+          check.checked = true;
+          label.append(
+            check,
+            el("span", target.url, { class: "target-url" }),
+            el("span", `${target.type} | ${target.statusCode}`, { class: "target-meta" }),
+          );
+          box.append(label);
+        }
+        for (const excluded of preview.excluded) {
+          const label = el("label", null, { class: "target-choice excluded" });
+          const check = el("input", null, { type: "checkbox", name: "invasion-target", value: excluded.url });
+          check.disabled = true;
+          label.append(
+            check,
+            el("span", excluded.url, { class: "target-url" }),
+            el("span", excluded.reason, { class: "target-reason" }),
+          );
+          box.append(label);
+        }
+        if (preview.targets.length === 0 && preview.excluded.length === 0) {
+          box.append(el("p", "No URLs discovered by this scan.", { class: "target-meta" }));
+        }
+        document.querySelector("#invasion-summary").textContent =
+          `${preview.targets.length} live URL${preview.targets.length === 1 ? "" : "s"} kept, `
+          + `${preview.excluded.length} excluded; at most ${preview.maxUrls} per invasion scan.`;
+      }
+
+      async function openInvasionConfirm() {
+        if (!detailScan || detailScan.phase !== "explore" || detailScan.status !== "completed") return;
+        // The panel can be cancelled and reopened for another scan while the
+        // preview is in flight; that response belongs to the panel that asked,
+        // not the one now on screen.
+        const parentId = detailScan.id;
+        invasionParentId = parentId;
+        const status = document.querySelector("#invasion-status");
+        const confirmBtn = document.querySelector("#invasion-confirm-btn");
+        clear(document.querySelector("#invasion-targets"));
+        document.querySelector("#invasion-summary").textContent = "";
+        document.querySelector("#invasion-active-note").hidden = true;
+        document.querySelector("#invasion-severity").value = "critical,high,medium";
+        for (const box of document.querySelectorAll('input[name="invasion-tool"]')) {
+          box.checked = box.value !== "zap-full";
+        }
+        confirmBtn.disabled = true;
+        status.textContent = "Loading this scan's live URLs…";
+        document.querySelector("#detail-section").hidden = true;
+        document.querySelector("#invasion-confirm").hidden = false;
+        try {
+          const preview = await api(`/api/scans/${parentId}/invasion-preview`);
+          if (invasionParentId !== parentId || document.querySelector("#invasion-confirm").hidden) return;
+          renderInvasionTargets(preview);
+          status.textContent = preview.targets.length === 0
+            ? "This scan has no live URLs left to attack. Run a new explore scan first."
+            : "";
+          confirmBtn.disabled = preview.targets.length === 0;
+        } catch (err) {
+          if (invasionParentId !== parentId || document.querySelector("#invasion-confirm").hidden) return;
+          status.textContent = `Could not load the preview: ${err.message}`;
+        }
       }
 
       async function bootstrap() {
@@ -471,6 +769,50 @@ import "../styles/aegis.css";
       document.querySelector("#filter-status").addEventListener("change", () => loadScans(true));
       document.querySelector("#scan-search").addEventListener("input", () => renderScans(true));
       document.querySelector("#asset-search").addEventListener("input", renderAssets);
+      document.querySelector("#finding-severity").addEventListener("change", renderFindings);
+      document.querySelector("#finding-tool").addEventListener("change", renderFindings);
+      document.querySelector("#finding-search").addEventListener("input", renderFindings);
+
+      document.querySelector("#invade-btn").addEventListener("click", openInvasionConfirm);
+      document.querySelector("#invasion-cancel-btn").addEventListener("click", () => {
+        document.querySelector("#invasion-confirm").hidden = true;
+        document.querySelector("#detail-section").hidden = false;
+      });
+      const zapFull = document.querySelector('input[name="invasion-tool"][value="zap-full"]');
+      zapFull.addEventListener("change", () => {
+        document.querySelector("#invasion-active-note").hidden = !zapFull.checked;
+      });
+      document.querySelector("#invasion-confirm-btn").addEventListener("click", async () => {
+        const status = document.querySelector("#invasion-status");
+        const btn = document.querySelector("#invasion-confirm-btn");
+        const targets = [...document.querySelectorAll('input[name="invasion-target"]:checked')].map((box) => box.value);
+        const tools = [...document.querySelectorAll('input[name="invasion-tool"]:checked')].map((box) => box.value);
+        if (targets.length === 0 || tools.length === 0) {
+          status.textContent = "Select at least one target and one tool.";
+          return;
+        }
+        btn.disabled = true;
+        status.textContent = "Starting…";
+        try {
+          // Section 1 create payload verbatim; the server validates the subset,
+          // caps, tools and the confirmed flag before anything is dispatched.
+          const body = {
+            phase: "invasion",
+            parentScanId: invasionParentId,
+            targets,
+            tools,
+            options: { severity: document.querySelector("#invasion-severity").value },
+            authorization: { confirmed: true },
+          };
+          const { id } = await api("/api/scans", { method: "POST", body: JSON.stringify(body) });
+          document.querySelector("#invasion-confirm").hidden = true;
+          status.textContent = "";
+          loadScans(true);
+          showDetail(id);
+        } catch (err) {
+          status.textContent = `Could not start the invasion: ${err.message}`;
+        } finally { btn.disabled = false; }
+      });
       bootstrap();
       // Poll only while the list is on screen and the tab is visible; a hidden
       // tab must not keep fetching and repainting in the background.

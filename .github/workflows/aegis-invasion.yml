@@ -1,0 +1,83 @@
+name: Aegis Invasion
+# Display-only: makes each run identifiable by target in the Actions UI. These
+# interpolate into names, never into shell source (inputs stay in env below).
+run-name: Aegis Invasion ${{ inputs.target_url }} (${{ inputs.scan_id }})
+on:
+  workflow_dispatch:
+    inputs:
+      scan_id: { required: true, type: string }
+      target_url: { required: true, type: string }
+      phase: { required: true, type: string }
+      tools: { required: true, type: string }
+      # The authorized URL selection, a JSON array. Required so a dispatch
+      # always states exactly what may be probed.
+      targets: { required: true, type: string }
+      callback_url: { required: true, type: string }
+      callback_token: { required: true, type: string }
+      # Declared for the dispatch contract; the Durable Object's alarm is what
+      # enforces the real per-scan deadline. The job itself is capped below at
+      # 70 minutes, enough for the slowest ZAP full scan.
+      timeout_seconds: { required: false, type: string, default: "3600" }
+      options: { required: false, type: string, default: "{}" }
+
+jobs:
+  invasion:
+    name: Aegis Invasion ${{ inputs.target_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - name: Mask callback token
+        run: echo "::add-mask::${{ inputs.callback_token }}"
+
+      - name: Checkout registry
+        uses: actions/checkout@v4
+
+      # Tool images are large and re-pulled every run otherwise. Cache the
+      # docker save tarball keyed on tools.json so a version bump invalidates
+      # it; a hit loads locally and the run step never touches the registry.
+      # Per-phase key: explore and invasion pull different images.
+      - name: Cache tool images
+        id: image-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/aegis-images.tar
+          key: aegis-tool-images-invasion-${{ hashFiles('tools.json') }}
+
+      - name: Load cached tool images
+        if: steps.image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/aegis-images.tar
+
+      - name: Pull tool images (cache miss)
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          node -e 'for (const t of require("./tools.json").tools) if (t.phase === "invasion") console.log(t.image)' \
+            | sort -u \
+            | while read -r img; do docker pull "$img" || echo "pull failed: $img"; done
+
+      # All user-controlled inputs arrive via env, never interpolated into shell
+      # source: a target like https://x/$(id) must not execute on the runner.
+      # The executor reads tools.json from this checkout, so the configured
+      # images/args (and any newly registered Invasion tool) are what run. The
+      # phase is fixed here rather than taken from the input: this file only
+      # ever runs invasion tools.
+      - name: Run invasion tools and post results
+        env:
+          PHASE: invasion
+          TARGET_URL: ${{ inputs.target_url }}
+          TARGETS_JSON: ${{ inputs.targets }}
+          TOOLS_JSON: ${{ inputs.tools }}
+          OPTIONS_JSON: ${{ inputs.options }}
+          CB_URL: ${{ inputs.callback_url }}
+          CB_TOKEN: ${{ inputs.callback_token }}
+        run: node scripts/run-scan.mjs
+
+      # Two registry entries (zap-baseline, zap-full) share one image, so the
+      # list is deduped before pull/save: docker save with a repeated reference
+      # is at best redundant and can fail the step after a successful scan.
+      - name: Save tool images for future runs
+        if: always() && steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          node -e 'for (const t of require("./tools.json").tools) if (t.phase === "invasion") console.log(t.image)' \
+            | sort -u \
+            | while read -r img; do docker image inspect "$img" >/dev/null 2>&1 && echo "$img"; done \
+            | xargs -r docker save -o /tmp/aegis-images.tar

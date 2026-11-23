@@ -1,5 +1,5 @@
 import type { ScanStore } from "../scan-store";
-import type { Asset, Finding, ScanEvent, ScanRecord, ScanStatus } from "../types";
+import type { Asset, Finding, ScanAuthorization, ScanEvent, ScanRecord, ScanStatus } from "../types";
 
 /**
  * In-memory ScanStore for the node project. The workers project runs the same
@@ -12,6 +12,15 @@ export function memoryScanStore(): ScanStore {
   const assets = new Map<string, Asset>();
   const findings = new Map<string, Finding>();
   const events = new Map<string, ScanEvent[]>();
+  const auths = new Map<string, ScanAuthorization>();
+
+  // Arrays are copied so a caller mutating what it passed in, or what it read
+  // back, cannot change the stored authorization.
+  const copyAuth = (auth: ScanAuthorization): ScanAuthorization => ({
+    ...auth,
+    targets: [...auth.targets],
+    tools: [...auth.tools],
+  });
 
   // Mirrors the D1 reads' CANDIDATE_MARKER filter: old unresolved alterx
   // permutations are evidence, not discoveries.
@@ -78,6 +87,19 @@ export function memoryScanStore(): ScanStore {
       return { ...claimed };
     },
 
+    async createIfNoActiveChild(rec) {
+      // Mirrors the D1 statement: a queued/running child under the same parent
+      // blocks the insert, and a NULL parent never matches (SQL ?5 = NULL is
+      // never true), so only a non-null parent can be blocked.
+      const parent = rec.parentScanId;
+      const blocked = parent !== null && [...scans.values()].some(
+        (scan) => scan.parentScanId === parent && (scan.status === "queued" || scan.status === "running"),
+      );
+      if (blocked) return false;
+      scans.set(rec.id, { ...rec });
+      return true;
+    },
+
     async addEvent(scanId, event, detail) {
       const list = events.get(scanId) ?? [];
       list.push({ event, detail: detail ?? null, createdAt: new Date().toISOString() });
@@ -107,6 +129,16 @@ export function memoryScanStore(): ScanStore {
 
     async events(scanId) {
       return (events.get(scanId) ?? []).map((event) => ({ ...event }));
+    },
+
+    async createAuthorization(rec) {
+      if (auths.has(rec.scanId)) throw new Error("authorization exists");
+      auths.set(rec.scanId, copyAuth(rec));
+    },
+
+    async getAuthorization(scanId) {
+      const auth = auths.get(scanId);
+      return auth ? copyAuth(auth) : null;
     },
   };
 }
