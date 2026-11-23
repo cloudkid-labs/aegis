@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+.dev.vars
+# Astro output (served via the ASSETS binding) and its generated types
+dist/
+.astro/

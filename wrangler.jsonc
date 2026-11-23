@@ -1,0 +1,97 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "aegis",
+	"main": "./src/index.ts",
+	// Capped: @cloudflare/vitest-pool-workers 0.23.0 bundles a workerd that
+	// refuses a compatibility date past this one.
+	"compatibility_date": "2026-08-22",
+	"workers_dev": false,
+	"preview_urls": false,
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1,
+			"invocation_logs": true,
+			"persist": true
+		},
+		"traces": {
+			"enabled": true,
+			"head_sampling_rate": 1,
+			"persist": true
+		},
+		"issue_detection": {
+			"enabled": true
+		}
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "SCAN_COORDINATOR",
+				"class_name": "ScanCoordinator"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "scan-coordinator-v1",
+			"new_sqlite_classes": [
+				"ScanCoordinator"
+			]
+		}
+	],
+	"routes": [
+		{
+			"pattern": "aegis.cloudkid.link",
+			"custom_domain": true
+		}
+	],
+	"assets": {
+		// Astro static build (astro.config.mjs). Every request enters the Worker
+		// first; src/index.ts answers /health and /api/* itself and hands
+		// everything else to this binding, which serves /, /_astro/* and 404.html.
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"run_worker_first": true,
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "404-page"
+	},
+	"vars": {
+		"GITHUB_OWNER": "rainiersvn",
+		"GITHUB_REPO": "aegis",
+		"GITHUB_WORKFLOW": "aegis-explore.yml",
+		"AEGIS_ORIGIN": "https://aegis.cloudkid.link",
+		// Google sign-in. GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are wrangler
+		// secrets (not vars). An empty allowlist admits no one, so sign-in stays
+		// locked until AEGIS_ALLOWED_EMAILS lists the operator's Google email(s).
+		"AEGIS_ALLOWED_EMAILS": "rainiersvn1@gmail.com"
+	},
+	// No `remote: true`: wrangler dev and the workers vitest project must use a
+	// LOCAL D1/R2, never production. Tests apply migrations and write scans.
+	"d1_databases": [
+		{
+			"binding": "AEGIS_DB",
+			"database_name": "aegis",
+			"database_id": "6b403b3e-ed8b-4f39-981b-94deee18698d"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "ARTIFACTS",
+			"bucket_name": "aegis-artifacts"
+		}
+	],
+	// The Workers rate-limit binding only supports 10s or 60s windows (wrangler
+	// rejects anything else), so a true 10-per-hour cap is NOT expressible here.
+	// This is the closest valid binding: the same limit in the longest window.
+	// An hourly cap needs a D1-backed count in the scan-create handler.
+	"ratelimits": [
+		{
+			"name": "SCAN_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		}
+	]
+}

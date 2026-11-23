@@ -1,0 +1,36 @@
+name: Aegis Explore
+on:
+  workflow_dispatch:
+    inputs:
+      scan_id: { required: true, type: string }
+      target_url: { required: true, type: string }
+      phase: { required: true, type: string }
+      tools: { required: true, type: string }
+      callback_url: { required: true, type: string }
+      callback_token: { required: true, type: string }
+      timeout_seconds: { required: false, type: string, default: "900" }
+      options: { required: false, type: string, default: "{}" }
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mask callback token
+        run: echo "::add-mask::${{ inputs.callback_token }}"
+
+      - name: Checkout registry
+        uses: actions/checkout@v4
+
+      # All user-controlled inputs arrive via env, never interpolated into shell
+      # source: a target like https://x/$(id) must not execute on the runner.
+      # The executor reads tools.json from this checkout, so the configured
+      # images/args (and any newly registered Explore tool) are what run.
+      - name: Run explore tools and post results
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+          TOOLS_JSON: ${{ inputs.tools }}
+          OPTIONS_JSON: ${{ inputs.options }}
+          CB_URL: ${{ inputs.callback_url }}
+          CB_TOKEN: ${{ inputs.callback_token }}
+        run: node scripts/run-explore.mjs
