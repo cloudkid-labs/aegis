@@ -42,11 +42,12 @@ const STATIC_ASSET = /\.(?:js|mjs|css|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|map)
 // is a legitimate origin and must not be read as a source position.
 const SOURCE_POSITION = /:\d+(?::\d+)?$/;
 
-/** Lowercase scheme and host, pathname trailing slashes folded (root stays
+/** Lowercase scheme and host (an explicit non-default port is part of the host,
+ *  so it keys as its own service), pathname trailing slashes folded (root stays
  *  `/`), search preserved. Two spellings of one resource share a key. */
 function targetKey(url: URL): string {
   const path = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
-  return `${url.protocol.toLowerCase()}//${url.hostname.toLowerCase()}${path}${url.search}`;
+  return `${url.protocol.toLowerCase()}//${url.host.toLowerCase()}${path}${url.search}`;
 }
 
 /** httpx writes `status_code` as a number; anything else (missing, null,

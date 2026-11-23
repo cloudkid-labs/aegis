@@ -53,6 +53,16 @@ describe("selectInvasionTargets", () => {
     expect(sel.excluded).toEqual([]);
   });
 
+  it("keeps a non-default port as its own service and folds host case with the port", () => {
+    const sel = selectInvasionTargets([
+      A("root", "url", "https://x.example/", '{"status_code":200}'),
+      A("alt", "url", "https://x.example:8443/", '{"status_code":200}'),
+      A("alt-upper", "url", "https://X.example:8443/", '{"status_code":200}'),
+    ]);
+    expect(sel.targets.map((t) => t.url)).toEqual(["https://x.example/", "https://x.example:8443/"]);
+    expect(sel.excluded).toEqual([{ url: "https://X.example:8443/", reason: "duplicate" }]);
+  });
+
   it("excludes assets without a live status code", () => {
     const sel = selectInvasionTargets([
       A("a", "url", "https://x.example/missing", null),
