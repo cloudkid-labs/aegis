@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "./auth";
 import { normalize, hasNormalizer, normalizeFindings } from "./normalizers/index";
+import { loadRegistry } from "./registry";
 import { normalizeSubfinder, normalizeHttpx, normalizeKatana, normalizeDnsx, normalizeNaabu, normalizeAlterxResolved } from "./normalizers/explore";
 import { normalizeNucleiJsonl, normalizeZapJson } from "./normalizers/invasion";
 import { nucleiInfo, nucleiRecord, zapAlert, zapReport } from "./test-support/fixtures";
@@ -305,5 +306,29 @@ describe("registry dispatch", () => {
   it("normalize() stays asset-only; findings go through normalizeFindings", () => {
     expect(hasNormalizer("nuclei-jsonl")).toBe(false);
     expect(hasNormalizer("subfinder-json")).toBe(true);
+  });
+});
+
+describe("findings registry coverage", () => {
+  // A findings entry whose normalizer key is absent from FINDING_NORMALIZERS
+  // makes normalizeFindings return [] (index.ts:42): the callback then reports
+  // "0 findings" and completes green, with no signal that the tool was dropped.
+  // A sample per tool proves the registry key actually resolves to a producing
+  // normalizer, and forces a new findings tool to add one before shipping.
+  const SAMPLES = new Map<string, unknown>([
+    ["nuclei", [nucleiRecord()]],
+    ["zap-baseline", zapReport()],
+    ["zap-full", zapReport()],
+  ]);
+
+  it("every findings entry's normalizer resolves to a producing implementation", async () => {
+    const entries = loadRegistry().filter((tool) => tool.outputType === "findings");
+    expect(entries.length).toBeGreaterThan(0);
+    for (const tool of entries) {
+      const sample = SAMPLES.get(tool.name);
+      expect(sample, `add a sample for findings tool "${tool.name}"`).toBeDefined();
+      const findings = await normalizeFindings(tool.normalizer, tool.name, sample, SCAN, NOW);
+      expect(findings.length, `normalizer "${tool.normalizer}" (${tool.name}) resolved to nothing`).toBeGreaterThan(0);
+    }
   });
 });

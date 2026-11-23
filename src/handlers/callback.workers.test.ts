@@ -87,6 +87,39 @@ describe("executor callback findings ingestion", () => {
     expect(completed?.detail).toBe("0 assets; 3 findings");
   });
 
+  it("rejects a replayed callback token with 409 while the scan is still running", async () => {
+    const replayId = "00112233445566778899aabbccddeeff";
+    await seedScan(replayId, "running");
+    const stub = testEnv.SCAN_COORDINATOR.get(testEnv.SCAN_COORDINATOR.idFromName(replayId));
+    expect((await stub.fetch("https://do/start", {
+      method: "POST",
+      body: JSON.stringify({ scanId: replayId, timeoutSeconds: 600 }),
+    })).status).toBe(200);
+    const token = await signCallbackToken(testEnv.CALLBACK_SECRET, replayId, Date.now() + 60_000);
+
+    // The route consumes the token before it parses the body, so a truncated
+    // upload burns the token and leaves the scan running. Replaying right after
+    // a completed scan would hit the terminal guard first and never exercise
+    // the single-use check; this is the reachable non-terminal replay.
+    const truncated = await SELF.fetch(`https://aegis.test/api/executors/callback/${replayId}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: "{",
+    });
+    expect(truncated.status).toBe(400);
+    expect(await truncated.json()).toEqual({ error: "Invalid JSON" });
+
+    const replay = await callback(replayId, token, {
+      artifacts: [{ tool: "nuclei", format: "jsonl", data: [nucleiRecord()] }],
+    });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toEqual({ error: "Callback already consumed" });
+
+    const store = d1ScanStore(testEnv.AEGIS_DB);
+    expect((await store.get(replayId))!.status).toBe("running");
+    expect(await store.listFindings(replayId)).toEqual([]);
+  });
+
   it("answers a late callback for a completed scan with 409 and stores nothing", async () => {
     const completedId = "fedcba9876543210fedcba9876543210";
     await seedScan(completedId, "completed");
