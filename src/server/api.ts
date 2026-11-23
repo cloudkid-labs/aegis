@@ -7,14 +7,22 @@ import { isAuthorized } from "../auth";
 import type { Env } from "../env";
 import { handleCallback } from "../handlers/callback";
 import {
-  handleAssets, handleCancelScan, handleCreateScan, handleGetScan, handleListScans, handleRetryScan,
+  handleAssets, handleCancelScan, handleCreateScan, handleFindings, handleGetScan,
+  handleInvasionPreview, handleListScans, handleRetryScan, handleSarif,
 } from "../handlers/scans";
 import { jsonError } from "../http";
 import type { ScanStore } from "../scan-store";
 import { currentSession } from "../session";
 import { d1SessionStore, type SessionStore } from "../session-store";
 
-export type ApiContext = Context<{ Bindings: Env }>;
+// `operatorEmail` is resolved once by the gate and read by the invasion
+// create handler, which has to attribute the authorization it stores.
+export type ApiEnv = { Bindings: Env; Variables: { operatorEmail: string } };
+export type ApiContext = Context<ApiEnv>;
+
+/** Bearer automation has no email. Recording the shared key by name is
+ *  truthful about who confirmed, unlike inventing or leaving the column empty. */
+const API_KEY_IDENTITY = "api-key";
 
 /** Resolved per request: production reads D1 from c.env, tests pass a memory store. */
 export type StoreFactory = (c: ApiContext) => ScanStore;
@@ -27,8 +35,8 @@ const SCAN_ID = ":scanId{[0-9a-f]{32}}";
 export function createApiApp(
   makeStore: StoreFactory,
   makeSession: SessionFactory = (c) => d1SessionStore(c.env.AEGIS_DB),
-): Hono<{ Bindings: Env }> {
-  const app = new Hono<{ Bindings: Env }>({ strict: false });
+): Hono<ApiEnv> {
+  const app = new Hono<ApiEnv>({ strict: false });
 
   // Executor callback. Authenticated by its own short-lived HMAC token,
   // validated inside the scan's Durable Object, so it must stay outside the
@@ -42,17 +50,29 @@ export function createApiApp(
   // resolves to null without a database round trip (./session), so the
   // bearer-only path never touches D1.
   const requireOperator = async (c: ApiContext, next: () => Promise<void>) => {
-    if (await currentSession(c.req.raw, makeSession(c))) return next();
-    if (await isAuthorized(c.req.raw, c.env.AEGIS_API_KEY)) return next();
+    const session = await currentSession(c.req.raw, makeSession(c));
+    if (session) {
+      c.set("operatorEmail", session.email);
+      return next();
+    }
+    if (await isAuthorized(c.req.raw, c.env.AEGIS_API_KEY)) {
+      c.set("operatorEmail", API_KEY_IDENTITY);
+      return next();
+    }
     return jsonError("Unauthorized", 401);
   };
   app.use("/scans", requireOperator);
   app.use("/scans/*", requireOperator);
 
-  app.post("/scans", (c) => handleCreateScan(c.req.raw, c.env, makeStore(c)));
+  app.post("/scans", (c) => handleCreateScan(c.req.raw, c.env, makeStore(c), c.get("operatorEmail")));
   app.get("/scans", (c) => handleListScans(c.env, makeStore(c)));
   app.get(`/scans/${SCAN_ID}`, (c) => handleGetScan(c.env, makeStore(c), c.req.param("scanId")));
   app.get(`/scans/${SCAN_ID}/assets`, (c) => handleAssets(c.env, makeStore(c), c.req.param("scanId")));
+  app.get(`/scans/${SCAN_ID}/invasion-preview`, (c) =>
+    handleInvasionPreview(c.env, makeStore(c), c.req.param("scanId")),
+  );
+  app.get(`/scans/${SCAN_ID}/findings`, (c) => handleFindings(c.env, makeStore(c), c.req.param("scanId")));
+  app.get(`/scans/${SCAN_ID}/sarif`, (c) => handleSarif(c.env, makeStore(c), c.req.param("scanId")));
   app.post(`/scans/${SCAN_ID}/cancel`, (c) =>
     handleCancelScan(c.req.raw, c.env, makeStore(c), c.req.param("scanId")),
   );

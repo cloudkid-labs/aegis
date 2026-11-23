@@ -18,6 +18,7 @@ export interface Env {
   GITHUB_OWNER: string;
   GITHUB_REPO: string;
   GITHUB_WORKFLOW: string;
+  GITHUB_WORKFLOW_INVASION: string;
   AEGIS_ORIGIN: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;

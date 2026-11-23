@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { dispatchGitHubWorkflow } from "./github";
 import type { ExecutorStartRequest } from "./types";
 
-const ENV = { GITHUB_TOKEN: "gh-token", GITHUB_OWNER: "cloudkid-labs", GITHUB_REPO: "aegis", GITHUB_WORKFLOW: "aegis-explore.yml" };
+const ENV = {
+  GITHUB_TOKEN: "gh-token", GITHUB_OWNER: "cloudkid-labs", GITHUB_REPO: "aegis",
+  GITHUB_WORKFLOW: "aegis-explore.yml", GITHUB_WORKFLOW_INVASION: "aegis-invasion.yml",
+};
 
 const REQ: ExecutorStartRequest = {
   scanId: "s1", target: "https://example.com", phase: "explore",
@@ -33,5 +36,22 @@ describe("dispatchGitHubWorkflow", () => {
   it("throws on non-204", async () => {
     const fetchImpl = vi.fn(async () => new Response("no", { status: 404 }));
     await expect(dispatchGitHubWorkflow(ENV, REQ, fetchImpl as unknown as typeof fetch)).rejects.toThrow(/404/);
+  });
+
+  it("sends the targets input only when the request carries a selection", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const targets = ["https://example.com/a", "https://example.com/b"];
+    await dispatchGitHubWorkflow(ENV, { ...REQ, phase: "invasion", targets }, fetchImpl as unknown as typeof fetch);
+    const [url, withTargets] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    // Invasion must reach its own workflow: the explore file rejects `targets`.
+    expect(url).toContain("aegis-invasion.yml");
+    const body = JSON.parse(withTargets.body as string);
+    expect(JSON.parse(body.inputs.targets)).toEqual(targets);
+
+    fetchImpl.mockClear();
+    await dispatchGitHubWorkflow(ENV, REQ, fetchImpl as unknown as typeof fetch);
+    const [, withoutTargets] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    // An explore dispatch must not add an input the explore workflow does not declare.
+    expect(Object.keys(JSON.parse(withoutTargets.body as string).inputs)).not.toContain("targets");
   });
 });

@@ -9,6 +9,8 @@ export interface ExecutorStartRequest {
   callbackToken: string;
   timeoutSeconds: number;
   options: Record<string, string | number | boolean>;
+  /** Invasion only: the authorized URL selection, sent as a JSON-array input. */
+  targets?: string[];
 }
 
 export interface ExecutorStartResult {
