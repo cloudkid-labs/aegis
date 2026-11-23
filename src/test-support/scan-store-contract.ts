@@ -170,6 +170,40 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       expect((await store.get("claim-gh"))!.status).toBe("queued");
     });
 
+    it("claimRetry succeeds once and refuses a stale claim on the same row", async () => {
+      const store = make();
+      await store.create(rec("retry-claim", { status: "failed", updatedAt: "2026-11-22T00:00:00.000Z" }));
+      const winner = "2026-11-22T04:00:00.000Z";
+
+      expect(await store.claimRetry("retry-claim", "2026-11-22T00:00:00.000Z", winner)).toBe(true);
+      expect((await store.get("retry-claim"))!.updatedAt).toBe(winner);
+
+      // The losing retry read the row before the winner wrote it.
+      expect(await store.claimRetry("retry-claim", "2026-11-22T00:00:00.000Z", "2026-11-22T04:00:01.000Z")).toBe(false);
+      expect((await store.get("retry-claim"))!.updatedAt).toBe(winner);
+      expect((await store.get("retry-claim"))!.status).toBe("failed");
+    });
+
+    it("claimRetry accepts a cancelled scan", async () => {
+      const store = make();
+      await store.create(rec("retry-claim-cancelled", { status: "cancelled" }));
+      expect(await store.claimRetry("retry-claim-cancelled", "2026-11-22T00:00:00.000Z", "2026-11-22T05:00:00.000Z")).toBe(true);
+      expect((await store.get("retry-claim-cancelled"))!.updatedAt).toBe("2026-11-22T05:00:00.000Z");
+    });
+
+    it("claimRetry refuses a scan that is not failed or cancelled", async () => {
+      for (const id of ["retry-claim-running", "retry-claim-done"]) {
+        const store = make();
+        await store.create(rec(id, { status: id.endsWith("running") ? "running" : "completed" }));
+        expect(await store.claimRetry(id, "2026-11-22T00:00:00.000Z", "2026-11-22T06:00:00.000Z")).toBe(false);
+        expect((await store.get(id))!.updatedAt).toBe("2026-11-22T00:00:00.000Z");
+      }
+    });
+
+    it("claimRetry on a missing scan returns false", async () => {
+      expect(await make().claimRetry("retry-claim-missing", "2026-11-22T00:00:00.000Z", "2026-11-22T06:00:00.000Z")).toBe(false);
+    });
+
     it("insertAssets stores assets scoped to a scan and is idempotent on id", async () => {
       const store = make();
       await store.create(rec("assets-a"));

@@ -87,6 +87,7 @@ const acceptingDo = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("createApiApp", () => {
@@ -439,7 +440,7 @@ describe("retry", () => {
     const copy = (await store.get(body.id))!;
     expect(copy.parentScanId).toBe(ID);
     expect(copy.target).toBe("https://example.com/");
-    expect((await store.events(ID)).some((e) => e.event === "retried" && e.detail === body.id)).toBe(true);
+    expect((await store.events(ID)).some((e) => e.event === "retried" && e.detail?.includes(body.id) && e.detail.includes("retried by api-key"))).toBe(true);
     expect((await store.events(body.id))[0]!.detail).toContain(`retry:${ID}`);
     expect(dispatches).toHaveLength(1);
   });
@@ -450,6 +451,31 @@ describe("retry", () => {
     const app = createApiApp(() => store);
     const res = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
     expect(res.status).toBe(201);
+  });
+
+  it("refuses a second retry that raced the first", async () => {
+    // Frozen clock: the seed and the claim share one millisecond, the case
+    // where rewriting updated_at with the same value would not move the CAS
+    // token and the second retry would slip through.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-23T00:00:00.000Z"));
+    const { env, store, dispatches } = harness();
+    await seed(store, ID, "failed");
+    const stale = (await store.get(ID))!;
+    // Both requests read the row before either could claim it.
+    const racing = {
+      ...store,
+      get: async (scanId: string) => (scanId === ID ? { ...stale } : store.get(scanId)),
+    } as ScanStore;
+    const app = createApiApp(() => racing);
+
+    const first = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(first.status).toBe(201);
+
+    const second = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: "Retry already in progress" });
+    expect(dispatches).toHaveLength(1);
   });
 
   it("refuses to re-run a completed scan", async () => {
@@ -486,6 +512,68 @@ describe("dispatch terminal-state guard", () => {
     const body = (await res.json()) as { id: string; status: string };
     expect(body.status).toBe("cancelled");
     expect((await store.get(body.id))!.status).toBe("cancelled");
+  });
+});
+
+describe("unexpected errors", () => {
+  it("answers a thrown error with a JSON 500 and logs the message", async () => {
+    const { env, store } = harness();
+    const exploding = {
+      ...store,
+      list: async () => { throw new Error("store exploded"); },
+    } as ScanStore;
+    const app = createApiApp(() => exploding);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await app.request("/scans", { headers: auth }, env);
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      expect(await res.json()).toEqual({ error: "Internal error" });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("store exploded"), expect.any(Error));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+describe("launch failure", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+  // A Durable Object namespace whose /start always rejects: before the fix
+  // this escaped launch() and left the scan queued with no alarm.
+  const rejectingDo = {
+    idFromName: (name: string) => name,
+    get: () => ({ fetch: async () => { throw new Error("coordinator unavailable"); } }),
+  } as unknown as DurableObjectNamespace;
+
+  it("fails the scan and answers a JSON 500 when the Durable Object cannot be started", async () => {
+    const { env, store } = harness({ SCAN_COORDINATOR: rejectingDo });
+    const app = createApiApp(() => store);
+
+    const res = await app.request("/scans", {
+      method: "POST", headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ target: "https://example.com" }),
+    }, env);
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Scan could not be launched" });
+    const rec = (await store.list(10))[0]!;
+    expect(rec.status).toBe("failed");
+    expect(rec.error).toContain("coordinator unavailable");
+    expect((await store.events(rec.id)).some((e) => e.event === "failed")).toBe(true);
+  });
+
+  it("fails the retried copy and answers a JSON 500 when launch throws", async () => {
+    const { env, store } = harness({ SCAN_COORDINATOR: rejectingDo });
+    await seed(store, ID, "failed");
+    const app = createApiApp(() => store);
+
+    const res = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Scan could not be launched" });
+    const copy = (await store.list(10)).find((s) => s.id !== ID)!;
+    expect(copy.status).toBe("failed");
+    expect(copy.error).toContain("coordinator unavailable");
   });
 });
 
@@ -965,7 +1053,63 @@ describe("invasion retry", () => {
     const events = await store.events(body.id);
     expect(events.map((e) => e.event)).toEqual(["created", "authorized", "dispatched"]);
     expect(events[0]!.detail).toContain(`retry:${ORIG}`);
-    expect((await store.events(ORIG)).some((e) => e.event === "retried" && e.detail === body.id)).toBe(true);
+    expect((await store.events(ORIG)).some((e) => e.event === "retried" && e.detail?.includes(body.id) && e.detail.includes("retried by api-key"))).toBe(true);
+  });
+
+  it("refuses a second retry of one invasion that read the row before the claim", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-23T00:00:00.000Z"));
+    const { env, store, dispatches } = harness();
+    await seedParent(store);
+    await seedFailedInvasion(store, { targets: [...KEPT], tools: ["nuclei"], active: false });
+    const stale = (await store.get(ORIG))!;
+    const racing = {
+      ...store,
+      get: async (scanId: string) => (scanId === ORIG ? { ...stale } : store.get(scanId)),
+    } as ScanStore;
+    const app = createApiApp(() => racing);
+
+    const first = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
+    expect(first.status).toBe(201);
+
+    const second = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: "Retry already in progress" });
+    // One confirmed invasion must never fan out into two active attacks.
+    expect(dispatches).toHaveLength(1);
+    expect((await store.list(50)).filter((s) => s.phase === "invasion" && s.id !== ORIG)).toHaveLength(1);
+  });
+
+  it("records the operator who triggered a retry without changing the stored authorization", async () => {
+    const { env, store } = harness();
+    await seedParent(store);
+    const now = new Date().toISOString();
+    await store.create({
+      id: ORIG, target: "https://example.com/", phase: "invasion", status: "failed", parentScanId: PARENT,
+      executor: "github", externalUrl: null, createdAt: now, updatedAt: now, completedAt: null,
+      error: "boom", options: null,
+    });
+    // Confirmed by automation; retried by a signed-in human.
+    await store.createAuthorization({
+      scanId: ORIG, email: "api-key", targets: [...KEPT], tools: ["nuclei"], active: false, confirmedAt: now,
+    });
+    const sessions = memorySessionStore();
+    const token = "E".repeat(43);
+    await sessions.create(await sha256Hex(token), "operator@example.com", Date.now(), Date.now() + 60_000);
+    const app = createApiApp(() => store, () => sessions);
+
+    const res = await app.request(`/scans/${ORIG}/retry`, {
+      method: "POST", headers: { cookie: `${SESSION_COOKIE}=${token}` },
+    }, env);
+    expect(res.status).toBe(201);
+    const newId = ((await res.json()) as { id: string }).id;
+
+    const retried = (await store.events(ORIG)).find((e) => e.event === "retried")!;
+    expect(retried.detail).toContain(newId);
+    expect(retried.detail).toContain("retried by operator@example.com");
+    // Immutability: the confirmation stays attributed to whoever confirmed it.
+    expect((await store.getAuthorization(ORIG))!.email).toBe("api-key");
+    expect((await store.getAuthorization(newId))!.email).toBe("api-key");
   });
 
   it("refuses to relaunch when a stored target is no longer allowed by the parent", async () => {
@@ -1033,7 +1177,7 @@ describe("invasion retry", () => {
     expect(dispatches).toHaveLength(2);
     expect(JSON.parse(dispatches[1]!.body.inputs.targets!)).toEqual(["https://example.com/"]);
     const retried = await store.events(firstId);
-    expect(retried.some((e) => e.event === "retried" && e.detail === secondId)).toBe(true);
+    expect(retried.some((e) => e.event === "retried" && e.detail?.includes(secondId) && e.detail.includes("retried by api-key"))).toBe(true);
   });
 
   it("keeps the 409 when a chained scan's explore parent is gone", async () => {

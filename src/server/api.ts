@@ -16,7 +16,8 @@ import { currentSession } from "../session";
 import { d1SessionStore, type SessionStore } from "../session-store";
 
 // `operatorEmail` is resolved once by the gate and read by the invasion
-// create handler, which has to attribute the authorization it stores.
+// create handler (to attribute the authorization it stores) and by retry
+// (to attribute the retried event).
 export type ApiEnv = { Bindings: Env; Variables: { operatorEmail: string } };
 export type ApiContext = Context<ApiEnv>;
 
@@ -77,11 +78,17 @@ export function createApiApp(
     handleCancelScan(c.req.raw, c.env, makeStore(c), c.req.param("scanId")),
   );
   app.post(`/scans/${SCAN_ID}/retry`, (c) =>
-    handleRetryScan(c.req.raw, c.env, makeStore(c), c.req.param("scanId")),
+    handleRetryScan(c.req.raw, c.env, makeStore(c), c.req.param("scanId"), c.get("operatorEmail")),
   );
 
   // The API never answers with an HTML or plain-text body: the dashboard
   // reads any non-JSON response as a failure between it and the Worker.
+  // That includes the unexpected: Hono's default 500 is plain text, so the
+  // error is logged with its message and answered as the same JSON envelope.
+  app.onError((err) => {
+    console.error(`Unhandled API error: ${err instanceof Error ? err.message : String(err)}`, err);
+    return jsonError("Internal error", 500);
+  });
   app.notFound(() => jsonError("Not found", 404));
 
   return app;

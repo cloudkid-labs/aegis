@@ -21,6 +21,13 @@ export interface ScanStore {
   transition(id: string, allowed: ScanStatus[], to: ScanStatus, patch?: ScanStatusPatch): Promise<boolean>;
   /** Atomically flip the oldest queued scan for one executor to running. */
   claimOldest(executor: ExecutorName, now: string): Promise<ScanRecord | null>;
+  /**
+   * Single-flight guard for retry: claims a failed/cancelled scan for one
+   * caller only. The compare-and-swap is on `updatedAt`, so two requests that
+   * read the same row cannot both proceed; the loser gets false and must
+   * answer 409 instead of creating a second active copy.
+   */
+  claimRetry(id: string, expectedUpdatedAt: string, now: string): Promise<boolean>;
   addEvent(scanId: string, event: string, detail?: string): Promise<void>;
   insertAssets(assets: Asset[]): Promise<void>;
   listAssets(scanId: string): Promise<Asset[]>;
@@ -144,13 +151,25 @@ function toFinding(row: FindingRow): Finding {
   };
 }
 
-/** D1 stores the lists as JSON text; callers get the arrays back. */
-function toAuthorization(row: AuthorizationRow): ScanAuthorization {
+/** D1 stores the lists as JSON text; callers get the arrays back. A row that
+ *  does not decode to two arrays was not written by createAuthorization
+ *  (corruption or a manual edit), so it reads as no authorization instead of
+ *  throwing on every retry and preview. */
+function toAuthorization(row: AuthorizationRow): ScanAuthorization | null {
+  let targets: unknown;
+  let tools: unknown;
+  try {
+    targets = JSON.parse(row.targets);
+    tools = JSON.parse(row.tools);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(targets) || !Array.isArray(tools)) return null;
   return {
     scanId: row.scan_id,
     email: row.email,
-    targets: JSON.parse(row.targets) as string[],
-    tools: JSON.parse(row.tools) as string[],
+    targets: targets as string[],
+    tools: tools as string[],
     active: row.active === 1,
     confirmedAt: row.confirmed_at,
   };
@@ -237,6 +256,18 @@ export function d1ScanStore(db: D1Database): ScanStore {
         .bind(executor, now)
         .first<ScanRow>();
       return row ? toRecord(row) : null;
+    },
+
+    async claimRetry(id, expectedUpdatedAt, now) {
+      // Compare-and-swap on updated_at: only the request that read the row
+      // before any competing retry wrote it can move it forward.
+      const res = await db
+        .prepare(
+          "UPDATE scans SET updated_at=?3 WHERE id=?1 AND updated_at=?2 AND status IN ('failed','cancelled')",
+        )
+        .bind(id, expectedUpdatedAt, now)
+        .run();
+      return (res.meta?.changes ?? 0) > 0;
     },
 
     async addEvent(scanId, event, detail) {

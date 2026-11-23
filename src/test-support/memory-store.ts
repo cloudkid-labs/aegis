@@ -87,6 +87,17 @@ export function memoryScanStore(): ScanStore {
       return { ...claimed };
     },
 
+    async claimRetry(id, expectedUpdatedAt, now) {
+      // Mirrors the D1 statement exactly: status gate, then the updated_at
+      // compare-and-swap, writing the new timestamp only on success.
+      const rec = scans.get(id);
+      if (!rec) return false;
+      if (rec.status !== "failed" && rec.status !== "cancelled") return false;
+      if (rec.updatedAt !== expectedUpdatedAt) return false;
+      scans.set(id, { ...rec, updatedAt: now });
+      return true;
+    },
+
     async addEvent(scanId, event, detail) {
       const list = events.get(scanId) ?? [];
       list.push({ event, detail: detail ?? null, createdAt: new Date().toISOString() });

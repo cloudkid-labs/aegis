@@ -38,23 +38,27 @@ interface LaunchExtras {
 }
 
 /** Start the timeout alarm, mint a callback token and dispatch the executor.
- *  Shared by create and retry so both track status identically. */
+ *  Shared by create and retry so both track status identically. Everything
+ *  that can throw sits inside the try: a Durable Object or token failure must
+ *  leave the scan failed with an event, never queued with no alarm. Returns
+ *  false when launch failed, so callers answer a JSON 500 instead of a 201
+ *  claiming a scan that never started. */
 async function launch(
   env: Env, store: ScanStore, id: string, targetUrl: string,
   phase: ScanRecord["phase"], tools: ReturnType<typeof toolsForPhase>, depth: number,
   extra: LaunchExtras = {},
-): Promise<void> {
+): Promise<boolean> {
   const timeoutSeconds = extra.timeoutSeconds ?? TIMEOUT_SECONDS;
-  const stub = env.SCAN_COORDINATOR.get(env.SCAN_COORDINATOR.idFromName(id));
-  await stub.fetch("https://do/start", { method: "POST", body: JSON.stringify({ scanId: id, timeoutSeconds }) });
-
-  const callbackUrl = `${env.AEGIS_ORIGIN}/api/executors/callback/${id}`;
-  const callbackToken = await signCallbackToken(env.CALLBACK_SECRET, id, Date.now() + timeoutSeconds * 1000 + 300_000);
-  // Explore's depth drives katana. Invasion has no depth tier; its severity
-  // filter takes the same options bag, and the executor defaults it when absent.
-  const options: Record<string, string | number | boolean> = phase === "explore" ? { depth } : {};
-  if (extra.severity !== undefined) options.severity = extra.severity;
   try {
+    const stub = env.SCAN_COORDINATOR.get(env.SCAN_COORDINATOR.idFromName(id));
+    await stub.fetch("https://do/start", { method: "POST", body: JSON.stringify({ scanId: id, timeoutSeconds }) });
+
+    const callbackUrl = `${env.AEGIS_ORIGIN}/api/executors/callback/${id}`;
+    const callbackToken = await signCallbackToken(env.CALLBACK_SECRET, id, Date.now() + timeoutSeconds * 1000 + 300_000);
+    // Explore's depth drives katana. Invasion has no depth tier; its severity
+    // filter takes the same options bag, and the executor defaults it when absent.
+    const options: Record<string, string | number | boolean> = phase === "explore" ? { depth } : {};
+    if (extra.severity !== undefined) options.severity = extra.severity;
     const result = await dispatchGitHubWorkflow(env, {
       scanId: id, target: targetUrl, phase, tools, callbackUrl, callbackToken, timeoutSeconds,
       options,
@@ -65,10 +69,12 @@ async function launch(
     // (its alarm is already deleted, so resurrecting it would lose timeout cover).
     const running = await store.transition(id, ["queued"], "running", { externalUrl: result.externalUrl });
     if (running) await store.addEvent(id, "dispatched", result.externalUrl ?? undefined);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const failed = await store.transition(id, ["queued", "running"], "failed", { error: msg });
     if (failed) await store.addEvent(id, "failed", msg);
+    return false;
   }
 }
 
@@ -128,7 +134,10 @@ export async function handleCreateScan(
   };
   await store.create(rec);
   await store.addEvent(id, "created", `${scanPhase}:${tools.map((t) => t.name).join(",")}`);
-  await launch(env, store, id, targetUrl, scanPhase, tools, Number(options?.depth) || 2);
+  const launched = await launch(env, store, id, targetUrl, scanPhase, tools, Number(options?.depth) || 2);
+  // launch() has already moved the scan to failed; report the failure rather
+  // than a 201 for a scan no executor will ever run.
+  if (!launched) return jsonError("Scan could not be launched", 500);
 
   const final = await store.get(id);
   return json({ id, status: final!.status }, 201);
@@ -230,11 +239,12 @@ async function createInvasion(
   if (authorized) return authorized;
   await store.addEvent(id, "created", `invasion:${selectedToolNames.join(",")}`);
   await store.addEvent(id, "authorized", authorizeDetail(authorizationRec));
-  await launch(env, store, id, targetUrl, "invasion", selectedTools, 2, {
+  const launched = await launch(env, store, id, targetUrl, "invasion", selectedTools, 2, {
     targets: authorizationRec.targets,
     severity: severity === undefined ? undefined : severity,
     timeoutSeconds,
   });
+  if (!launched) return jsonError("Scan could not be launched", 500);
 
   const final = await store.get(id);
   return json({ id, status: final!.status }, 201);
@@ -243,6 +253,23 @@ async function createInvasion(
 /** Audit line for both create and retry: who confirmed, how many, which profile. */
 function authorizeDetail(authorization: ScanAuthorization): string {
   return `${authorization.email}; targets=${authorization.targets.length}; active=${authorization.active}`;
+}
+
+/** The retried event names the copy and who triggered the retry. The stored
+ *  authorization keeps its original email and confirmedAt: re-running a scan
+ *  is not a new confirmation. */
+function retriedDetail(newScanId: string, operatorEmail: string): string {
+  return `${newScanId}; retried by ${operatorEmail}`;
+}
+
+/** The retry claim's CAS token must differ from the value it compares against.
+ *  ISO timestamps only resolve to the millisecond, so a scan that failed in
+ *  the same millisecond as the retry would otherwise rewrite updated_at
+ *  unchanged and let a second retry claim the same row. */
+function claimToken(expectedUpdatedAt: string): string {
+  const now = Date.now();
+  const expected = Date.parse(expectedUpdatedAt);
+  return new Date(Number.isFinite(expected) && now <= expected ? expected + 1 : now).toISOString();
 }
 
 /**
@@ -278,8 +305,12 @@ async function persistAuthorization(
 }
 
 /** Re-run a failed or cancelled scan as a NEW scan with the same target and
- *  options, linked to the original via parentScanId and a retry event. */
-export async function handleRetryScan(_req: Request, env: Env, store: ScanStore, id: string): Promise<Response> {
+ *  options, linked to the original via parentScanId and a retry event.
+ *  `operatorEmail` is who triggered the retry, recorded on that event; the
+ *  stored authorization itself stays immutable. */
+export async function handleRetryScan(
+  _req: Request, env: Env, store: ScanStore, id: string, operatorEmail: string,
+): Promise<Response> {
   const rec = await store.get(id);
   if (!rec) return jsonError("Scan not found", 404);
   if (rec.status !== "failed" && rec.status !== "cancelled") {
@@ -287,14 +318,21 @@ export async function handleRetryScan(_req: Request, env: Env, store: ScanStore,
   }
   const limit = await env.SCAN_LIMITER.limit({ key: "scans" });
   if (!limit.success) return jsonError("Rate limit exceeded", 429);
-  if (rec.phase === "invasion") return retryInvasion(env, store, rec);
+
+  // Single-flight: two requests of a concurrent retry read the same row, but
+  // only the first claim moves its updatedAt. Without this each request would
+  // create and dispatch its own active copy of one failed scan.
+  const now = new Date().toISOString();
+  if (!(await store.claimRetry(rec.id, rec.updatedAt, claimToken(rec.updatedAt)))) {
+    return jsonError("Retry already in progress", 409);
+  }
+  if (rec.phase === "invasion") return retryInvasion(env, store, rec, operatorEmail, now);
 
   const options = rec.options ? (JSON.parse(rec.options) as Record<string, unknown>) : null;
   const tools = selectTools(rec.phase, options);
   if (tools.length === 0) return jsonError("No tools selected", 400);
 
   const newId = newScanId();
-  const now = new Date().toISOString();
   const copy: ScanRecord = {
     id: newId, target: rec.target, phase: rec.phase, status: "queued", parentScanId: rec.id,
     executor: "github", externalUrl: null, createdAt: now, updatedAt: now,
@@ -302,8 +340,9 @@ export async function handleRetryScan(_req: Request, env: Env, store: ScanStore,
   };
   await store.create(copy);
   await store.addEvent(newId, "created", `retry:${id} ${rec.phase}:${tools.map((t) => t.name).join(",")}`);
-  await store.addEvent(id, "retried", newId);
-  await launch(env, store, newId, rec.target, rec.phase, tools, Number(options?.depth) || 2);
+  await store.addEvent(id, "retried", retriedDetail(newId, operatorEmail));
+  const launched = await launch(env, store, newId, rec.target, rec.phase, tools, Number(options?.depth) || 2);
+  if (!launched) return jsonError("Scan could not be launched", 500);
 
   const final = await store.get(newId);
   return json({ id: newId, status: final!.status }, 201);
@@ -315,7 +354,9 @@ export async function handleRetryScan(_req: Request, env: Env, store: ScanStore,
  * A chained retry re-reads the parent's live selection, because an asset that
  * is no longer allowed there must not be attacked under the old confirmation.
  */
-async function retryInvasion(env: Env, store: ScanStore, rec: ScanRecord): Promise<Response> {
+async function retryInvasion(
+  env: Env, store: ScanStore, rec: ScanRecord, operatorEmail: string, now: string,
+): Promise<Response> {
   const authorization = await store.getAuthorization(rec.id);
   if (!authorization) return jsonError("Scan has no stored authorization", 409);
 
@@ -356,7 +397,6 @@ async function retryInvasion(env: Env, store: ScanStore, rec: ScanRecord): Promi
   const timeoutSeconds = active ? INVASION_TIMEOUT_ACTIVE : INVASION_TIMEOUT_BASELINE;
 
   const newId = newScanId();
-  const now = new Date().toISOString();
   const copy: ScanRecord = {
     id: newId, target: rec.target, phase: "invasion", status: "queued",
     // Keep a chained scan pointing at the explore scan whose assets allowed
@@ -378,12 +418,13 @@ async function retryInvasion(env: Env, store: ScanStore, rec: ScanRecord): Promi
   if (authorized) return authorized;
   await store.addEvent(newId, "created", `retry:${rec.id} invasion:${tools.map((t) => t.name).join(",")}`);
   await store.addEvent(newId, "authorized", authorizeDetail(authorizationRec));
-  await store.addEvent(rec.id, "retried", newId);
-  await launch(env, store, newId, rec.target, "invasion", tools, 2, {
+  await store.addEvent(rec.id, "retried", retriedDetail(newId, operatorEmail));
+  const launched = await launch(env, store, newId, rec.target, "invasion", tools, 2, {
     targets: authorizationRec.targets,
     severity,
     timeoutSeconds,
   });
+  if (!launched) return jsonError("Scan could not be launched", 500);
 
   const final = await store.get(newId);
   return json({ id: newId, status: final!.status }, 201);
