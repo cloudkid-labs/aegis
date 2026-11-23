@@ -41,11 +41,15 @@ function zapSeverity(value: unknown): Severity {
   return severityFrom(word === "informational" ? "info" : word);
 }
 
-/** ZAP confidence; "False Positive" is a confidence value, not two words. */
+/** ZAP confidence arrives as a word ("High", "False Positive") or as the
+ *  traditional-json report's numeric code: 0 false positive, 1 low, 2 medium,
+ *  3 high, 4 confirmed. Both collapse onto the three-level Confidence type. */
 function zapConfidence(value: unknown): Confidence {
-  const word = typeof value === "string" ? value.trim().toLowerCase().replace(/\s*\(.*\)$/, "") : "";
-  if (word === "confirmed" || word === "high") return "high";
-  if (word === "low" || word === "false positive") return "low";
+  const word = typeof value === "string" || typeof value === "number"
+    ? String(value).trim().toLowerCase().replace(/\s*\(.*\)$/, "")
+    : "";
+  if (word === "confirmed" || word === "high" || word === "3" || word === "4") return "high";
+  if (word === "low" || word === "false positive" || word === "0" || word === "1") return "low";
   return "medium";
 }
 

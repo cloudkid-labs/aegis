@@ -260,6 +260,9 @@ describe("zap normalizer", () => {
     const cases: [string, string][] = [
       ["Confirmed", "high"], ["High", "high"], ["Medium", "medium"],
       ["Low", "low"], ["False Positive", "low"], ["Odd", "medium"],
+      // traditional-json writes numeric codes: 0 false positive, 1 low,
+      // 2 medium, 3 high, 4 confirmed.
+      ["0", "low"], ["1", "low"], ["2", "medium"], ["3", "high"], ["4", "high"],
     ];
     for (const [confidence, expected] of cases) {
       const report = zapReport([zapAlert({ confidence, instances: [zapInstance()] })]);
