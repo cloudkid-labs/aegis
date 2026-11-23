@@ -1,7 +1,7 @@
 name: Aegis Explore
 # Display-only: makes each run identifiable by target in the Actions UI. These
 # interpolate into names, never into shell source (inputs stay in env below).
-run-name: Explore ${{ inputs.target_url }} (${{ inputs.scan_id }})
+run-name: Aegis Explore ${{ inputs.target_url }} (${{ inputs.scan_id }})
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +16,7 @@ on:
 
 jobs:
   explore:
-    name: Explore ${{ inputs.target_url }}
+    name: Aegis Explore ${{ inputs.target_url }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -25,6 +25,26 @@ jobs:
 
       - name: Checkout registry
         uses: actions/checkout@v4
+
+      # Tool images are large and re-pulled every run otherwise. Cache the
+      # docker save tarball keyed on tools.json so a version bump invalidates
+      # it; a hit loads locally and the run step never touches the registry.
+      - name: Cache tool images
+        id: image-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/aegis-images.tar
+          key: aegis-tool-images-${{ hashFiles('tools.json') }}
+
+      - name: Load cached tool images
+        if: steps.image-cache.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/aegis-images.tar
+
+      - name: Pull tool images (cache miss)
+        if: steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          node -e 'for (const t of require("./tools.json").tools) if (t.phase === "explore") console.log(t.image)' \
+            | while read -r img; do docker pull "$img" || echo "pull failed: $img"; done
 
       # All user-controlled inputs arrive via env, never interpolated into shell
       # source: a target like https://x/$(id) must not execute on the runner.
@@ -38,3 +58,10 @@ jobs:
           CB_URL: ${{ inputs.callback_url }}
           CB_TOKEN: ${{ inputs.callback_token }}
         run: node scripts/run-explore.mjs
+
+      - name: Save tool images for future runs
+        if: always() && steps.image-cache.outputs.cache-hit != 'true'
+        run: |
+          node -e 'for (const t of require("./tools.json").tools) if (t.phase === "explore") console.log(t.image)' \
+            | while read -r img; do docker image inspect "$img" >/dev/null 2>&1 && echo "$img"; done \
+            | xargs -r docker save -o /tmp/aegis-images.tar
