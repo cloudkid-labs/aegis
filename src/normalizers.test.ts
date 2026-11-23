@@ -275,6 +275,15 @@ describe("findings dispatch", () => {
     expect(await normalizeFindings("nuclei-sarif", "nuclei", [nucleiRecord()], SCAN, NOW)).toEqual([]);
   });
 
+  it("returns [] for prototype keys instead of resolving them off Object.prototype", async () => {
+    // parseRegistry accepts any non-empty normalizer string, so a tools.json typo
+    // can arrive here. A bare map lookup finds Object.prototype.toString (a
+    // function, not a normalizer) and Object's own "__proto__" accessor.
+    await expect(normalizeFindings("toString", "nuclei", [], "s", "now")).resolves.toEqual([]);
+    await expect(normalizeFindings("__proto__", "nuclei", [], "s", "now")).resolves.toEqual([]);
+    await expect(normalizeFindings("constructor", "nuclei", [], "s", "now")).resolves.toEqual([]);
+  });
+
   it("hashes the caller's tool name into the id, so zap-full and zap-baseline never collide", async () => {
     const baseline = await normalizeFindings("zap-json", "zap-baseline", zapReport(), SCAN, NOW);
     const full = await normalizeFindings("zap-json", "zap-full", zapReport(), SCAN, NOW);

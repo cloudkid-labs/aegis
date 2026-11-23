@@ -35,9 +35,12 @@ const FINDING_NORMALIZERS: Record<string, FindingNormalizerFn> = {
 };
 
 export async function normalizeFindings(normalizerKey: string, tool: string, data: unknown, scanId: string, now: string): Promise<Finding[]> {
-  const fn = FINDING_NORMALIZERS[normalizerKey];
-  if (!fn) return [];
-  return fn(tool, data, scanId, now);
+  // parseRegistry only checks that the normalizer string is non-empty, so a
+  // tools.json typo can reach here. A bare lookup would resolve prototype keys
+  // ("toString", "constructor") to Object.prototype members and "__proto__" to
+  // the prototype object itself; only the map's own keys are normalizers.
+  if (!Object.hasOwn(FINDING_NORMALIZERS, normalizerKey)) return [];
+  return FINDING_NORMALIZERS[normalizerKey]!(tool, data, scanId, now);
 }
 
 export function hasNormalizer(key: string): boolean {
