@@ -10,7 +10,7 @@ import type {
 export interface ScanStore {
   create(rec: ScanRecord): Promise<void>;
   get(id: string): Promise<ScanRecord | null>;
-  list(limit: number): Promise<ScanRecord[]>;
+  list(limit: number): Promise<ScanListRow[]>;
   setStatus(id: string, status: ScanStatus, patch?: ScanStatusPatch): Promise<void>;
   /**
    * Atomic conditional status change: writes only if the current status is in
@@ -32,6 +32,11 @@ export interface ScanStatusPatch {
   externalUrl?: string | null;
   error?: string | null;
   completedAt?: string | null;
+}
+
+/** A scan plus the asset count the history table shows beside it. */
+export interface ScanListRow extends ScanRecord {
+  assetCount: number;
 }
 
 interface ScanRow {
@@ -125,6 +130,8 @@ function toFinding(row: FindingRow): Finding {
 const SCAN_COLS =
   "id, target, phase, status, parent_scan_id, executor, external_url, created_at, updated_at, completed_at, error, options";
 
+const SCAN_COLS_S = SCAN_COLS.split(", ").map((c) => `s.${c}`).join(", ");
+
 const ASSET_COLS = "id, scan_id, type, value, metadata, created_at";
 
 const FINDING_COLS =
@@ -149,10 +156,15 @@ export function d1ScanStore(db: D1Database): ScanStore {
 
     async list(limit) {
       const { results } = await db
-        .prepare(`SELECT ${SCAN_COLS} FROM scans ORDER BY created_at DESC, id DESC LIMIT ?1`)
+        .prepare(
+          `SELECT ${SCAN_COLS_S}, COUNT(a.id) AS asset_count
+             FROM scans s LEFT JOIN assets a ON a.scan_id = s.id
+            GROUP BY s.id
+            ORDER BY s.created_at DESC, s.id DESC LIMIT ?1`,
+        )
         .bind(limit)
-        .all<ScanRow>();
-      return results.map(toRecord);
+        .all<ScanRow & { asset_count: number }>();
+      return results.map((row) => ({ ...toRecord(row), assetCount: row.asset_count }));
     },
 
     async setStatus(id, status, patch = {}) {

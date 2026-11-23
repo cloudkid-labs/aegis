@@ -94,6 +94,21 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       expect(await store.list(0)).toEqual([]);
     });
 
+    it("list carries the number of assets per scan", async () => {
+      const store = make();
+      await store.create(rec("count-full"));
+      await store.insertAssets([asset("count-a1", "count-full"), asset("count-a2", "count-full")]);
+      const rows = await store.list(1000);
+      expect(rows.find((r) => r.id === "count-full")!.assetCount).toBe(2);
+    });
+
+    it("list reports zero assets for a scan with none", async () => {
+      const store = make();
+      await store.create(rec("count-empty"));
+      const rows = await store.list(1000);
+      expect(rows.find((r) => r.id === "count-empty")!.assetCount).toBe(0);
+    });
+
     it("setStatus applies patch fields", async () => {
       const store = make();
       await store.create(rec("status"));
