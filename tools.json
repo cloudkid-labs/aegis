@@ -78,7 +78,7 @@
       "phase": "invasion",
       "executor": "github",
       "image": "ghcr.io/zaproxy/zaproxy:stable",
-      "args": ["zap-baseline.py", "-t", "{{target}}", "-J", "/out/zap.json"],
+      "args": ["zap-baseline.py", "-t", "{{target}}", "-J", "zap.json"],
       "outputFormat": "json",
       "outputType": "findings",
       "normalizer": "zap-json"
@@ -88,7 +88,7 @@
       "phase": "invasion",
       "executor": "github",
       "image": "ghcr.io/zaproxy/zaproxy:stable",
-      "args": ["zap-full-scan.py", "-t", "{{target}}", "-J", "/out/zap-full.json"],
+      "args": ["zap-full-scan.py", "-t", "{{target}}", "-J", "zap-full.json"],
       "outputFormat": "json",
       "outputType": "findings",
       "normalizer": "zap-json",

@@ -101,7 +101,9 @@ describe("invasion tool configuration", () => {
     const full = getTool("zap-full")!;
     expect(full.phase).toBe("invasion");
     expect(full.image).toBe("ghcr.io/zaproxy/zaproxy:stable");
-    expect(full.args).toEqual(["zap-full-scan.py", "-t", "{{target}}", "-J", "/out/zap-full.json"]);
+    // -J is relative on purpose: ZAP resolves it against /zap/wrk, which the
+    // executor mounts for zap-* tools (an absolute value misses the mount).
+    expect(full.args).toEqual(["zap-full-scan.py", "-t", "{{target}}", "-J", "zap-full.json"]);
     expect(full.outputFormat).toBe("json");
     expect(full.outputType).toBe("findings");
     expect(full.normalizer).toBe("zap-json");
@@ -110,6 +112,7 @@ describe("invasion tool configuration", () => {
 
   it("zap-baseline stays enabled alongside nuclei; zap-full is the only opt-in", () => {
     const baseline = getTool("zap-baseline")!;
+    expect(baseline.args).toEqual(["zap-baseline.py", "-t", "{{target}}", "-J", "zap.json"]);
     expect(baseline.normalizer).toBe("zap-json");
     expect(baseline.default).toBeUndefined();
     const selected = toolsForPhase("invasion").filter((t) => t.default !== false).map((t) => t.name);

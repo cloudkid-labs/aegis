@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 
 const OUT = "/tmp/aegis-out";
-// In-container paths of the shared lists (the mount maps OUT -> /out).
+// In-container paths of the shared lists (non-ZAP tools mount OUT at /out).
 const HOSTS_ARG = "/out/hosts.txt";
 const URLS_ARG = "/out/urls.txt";
 const phase = process.env.PHASE || "explore";
@@ -79,13 +79,26 @@ function resolve(arg) {
     .replaceAll("{{depth}}", depth);
 }
 
-// The output path is whatever the registry args pass to a write flag; mapping
-// /out/ back to the host mount lets the post step find each tool's result.
+// The output path is whatever the registry args pass to a write flag, mapped
+// back from the tool's container mount so the post step finds each tool's result.
 // ZAP reports through -J, so it counts as a write flag like the rest.
-function outputPath(argv) {
+//
+// Load-bearing constraint: ZAP's docker scripts (zap-baseline.py and
+// zap-full-scan.py in zaproxy/zaproxy docker/) set base_dir to /zap/wrk/ and,
+// when any file-based option such as -J is supplied, warn and exit 3 unless
+// that directory exists. Dockerfile-stable never creates it, so it only exists
+// when mounted. Both scripts then write the report via
+// os.path.join(base_dir, report_json) — and the baseline automation-framework
+// path passes base_dir plus the -J value to the report job as reportDir and
+// reportFile — so the -J value must be a name relative to /zap/wrk, and the
+// zap-* mount below is what puts the report on the host.
+function outputPath(argv, mount) {
   for (let i = 0; i < argv.length - 1; i++) {
     if (["-o", "--output", "-J", "-sarif-export", "-export"].includes(argv[i])) {
-      return argv[i + 1].replace(/^\/out\//, `${OUT}/`);
+      const value = argv[i + 1];
+      // A relative value (ZAP's "zap.json") is resolved by the tool against its
+      // own mount; an absolute value names a path inside that mount.
+      return value.startsWith("/") ? value.replace(`${mount}/`, `${OUT}/`) : `${OUT}/${value}`;
     }
   }
   return null;
@@ -161,14 +174,17 @@ if (phase === "invasion") {
 
 for (const tool of tools) {
   const argv = tool.args.map(resolve);
+  // ZAP's scan scripts need /zap/wrk mounted (see outputPath) and resolve a
+  // relative -J name against it; every other tool keeps the /out convention.
+  const isZap = tool.name.startsWith("zap-");
+  const mount = isZap ? "/zap/wrk" : "/out";
   // The ZAP image runs as its non-root `zap` user, which must be able to write
   // the host-mounted output directory or the report never lands.
-  const isZap = tool.name.startsWith("zap-");
   if (isZap) fs.chmodSync(OUT, 0o777);
   console.log(`=== Running ${tool.name} (${tool.image}) ===`);
-  const res = spawnSync("docker", ["run", "--rm", "-v", `${OUT}:/out`, tool.image, ...argv], { stdio: "inherit" });
+  const res = spawnSync("docker", ["run", "--rm", "-v", `${OUT}:${mount}`, tool.image, ...argv], { stdio: "inherit" });
 
-  const file = outputPath(argv);
+  const file = outputPath(argv, mount);
   const fileExists = Boolean(file && fs.existsSync(file));
   // ZAP exit 0/1/2 mean pass/warn/fail-with-findings, not tool failure; the
   // report file is the real success signal. Any other code is a failure.
