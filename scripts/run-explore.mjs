@@ -7,9 +7,10 @@
 // OPTIONS_JSON, CB_URL, CB_TOKEN), never as shell-interpolated source.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 
 const OUT = "/tmp/aegis-out";
+// In-container path of the shared hosts list (the mount maps OUT -> /out).
+const HOSTS_ARG = "/out/hosts.txt";
 const target = process.env.TARGET_URL ?? "";
 const selected = JSON.parse(process.env.TOOLS_JSON ?? "[]");
 const options = JSON.parse(process.env.OPTIONS_JSON ?? "{}");
@@ -30,10 +31,20 @@ fs.mkdirSync(OUT, { recursive: true });
 const failures = [];
 const artifacts = [];
 
+// dnsx (resolution) and alterx (permutations) read a hosts LIST, not -d: dnsx
+// v1.2.2 rejects -d without -w, and alterx has no -d input flag. Seed the list
+// with the target host and grow it with subfinder's discoveries as they land.
+const hosts = new Set(host ? [host] : []);
+function writeHosts() {
+  fs.writeFileSync(`${OUT}/hosts.txt`, [...hosts].join("\n") + "\n");
+}
+writeHosts();
+
 function resolve(arg) {
   return arg
     .replaceAll("{{target}}", target)
     .replaceAll("{{host}}", host)
+    .replaceAll("{{hosts}}", HOSTS_ARG)
     .replaceAll("{{depth}}", depth);
 }
 
@@ -88,6 +99,10 @@ for (const tool of tools) {
   if (tool.outputFormat === "text") data = raw;
   else if (tool.outputFormat === "sarif") data = JSON.parse(raw);
   else data = raw.split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  if (tool.name === "subfinder" && Array.isArray(data)) {
+    for (const e of data) if (e && typeof e.host === "string") hosts.add(e.host);
+    writeHosts();
+  }
   addArtifact(tool.name, tool.outputFormat, data);
 }
 

@@ -15,7 +15,7 @@
       "phase": "explore",
       "executor": "github",
       "image": "projectdiscovery/dnsx:v1.2.2",
-      "args": ["-d", "{{host}}", "-json", "-o", "/out/dnsx.json", "-silent"],
+      "args": ["-l", "{{hosts}}", "-json", "-o", "/out/dnsx.json", "-silent"],
       "outputFormat": "json",
       "outputType": "assets",
       "normalizer": "dnsx-json"
@@ -25,7 +25,7 @@
       "phase": "explore",
       "executor": "github",
       "image": "projectdiscovery/alterx:v0.2.0",
-      "args": ["-d", "{{host}}", "-o", "/out/alterx.txt"],
+      "args": ["-l", "{{hosts}}", "-o", "/out/alterx.txt"],
       "outputFormat": "text",
       "outputType": "assets",
       "normalizer": "alterx-text",
