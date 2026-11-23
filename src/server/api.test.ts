@@ -298,6 +298,50 @@ describe("callback terminal-state guard", () => {
   });
 });
 
+describe("retry", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+
+  it("re-runs a failed scan as a new linked scan", async () => {
+    const { env, store, dispatches } = harness();
+    await seed(store, ID, "failed");
+    const app = createApiApp(() => store);
+    const res = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; status: string };
+    expect(body.id).not.toBe(ID);
+    expect(body.status).toBe("running");
+    const copy = (await store.get(body.id))!;
+    expect(copy.parentScanId).toBe(ID);
+    expect(copy.target).toBe("https://example.com/");
+    expect((await store.events(ID)).some((e) => e.event === "retried" && e.detail === body.id)).toBe(true);
+    expect((await store.events(body.id))[0]!.detail).toContain(`retry:${ID}`);
+    expect(dispatches).toHaveLength(1);
+  });
+
+  it("re-runs a cancelled scan", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "cancelled");
+    const app = createApiApp(() => store);
+    const res = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(201);
+  });
+
+  it("refuses to re-run a completed scan", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "completed");
+    const app = createApiApp(() => store);
+    const res = await app.request(`/scans/${ID}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(409);
+  });
+
+  it("404s an unknown scan", async () => {
+    const { env, store } = harness();
+    const app = createApiApp(() => store);
+    const res = await app.request(`/scans/${"0".repeat(32)}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("dispatch terminal-state guard", () => {
   it("a cancel landing during dispatch is not overwritten by running", async () => {
     const { env, store } = harness();

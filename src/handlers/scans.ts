@@ -22,6 +22,42 @@ function newScanId(): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const TIMEOUT_SECONDS = 900;
+
+/** Start the timeout alarm, mint a callback token and dispatch the executor.
+ *  Shared by create and retry so both track status identically. */
+async function launch(
+  env: Env, store: ScanStore, id: string, targetUrl: string,
+  phase: ScanRecord["phase"], tools: ReturnType<typeof toolsForPhase>, depth: number,
+): Promise<void> {
+  const stub = env.SCAN_COORDINATOR.get(env.SCAN_COORDINATOR.idFromName(id));
+  await stub.fetch("https://do/start", { method: "POST", body: JSON.stringify({ scanId: id, timeoutSeconds: TIMEOUT_SECONDS }) });
+
+  const callbackUrl = `${env.AEGIS_ORIGIN}/api/executors/callback/${id}`;
+  const callbackToken = await signCallbackToken(env.CALLBACK_SECRET, id, Date.now() + TIMEOUT_SECONDS * 1000 + 300_000);
+  try {
+    const result = await dispatchGitHubWorkflow(env, {
+      scanId: id, target: targetUrl, phase, tools, callbackUrl, callbackToken, timeoutSeconds: TIMEOUT_SECONDS,
+      options: { depth },
+    });
+    // Conditional: a cancel may land while the dispatch request is pending.
+    // Only a still-queued scan becomes running; a cancelled one stays cancelled
+    // (its alarm is already deleted, so resurrecting it would lose timeout cover).
+    const running = await store.transition(id, ["queued"], "running", { externalUrl: result.externalUrl });
+    if (running) await store.addEvent(id, "dispatched", result.externalUrl ?? undefined);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const failed = await store.transition(id, ["queued", "running"], "failed", { error: msg });
+    if (failed) await store.addEvent(id, "failed", msg);
+  }
+}
+
+function selectTools(phase: ScanRecord["phase"], options: Record<string, unknown> | null) {
+  const allTools = toolsForPhase(phase);
+  const requested = Array.isArray(options?.tools) ? (options!.tools as string[]) : null;
+  return requested ? allTools.filter((t) => requested.includes(t.name)) : allTools.filter((t) => t.default !== false);
+}
+
 export async function handleCreateScan(req: Request, env: Env, store: ScanStore): Promise<Response> {
   const limit = await env.SCAN_LIMITER.limit({ key: "scans" });
   if (!limit.success) return jsonError("Rate limit exceeded", 429);
@@ -35,12 +71,9 @@ export async function handleCreateScan(req: Request, env: Env, store: ScanStore)
   const scanPhase = phase === "invasion" ? "invasion" : "explore";
   if (scanPhase === "invasion") return jsonError("Invasion phase not yet available (Phase 2)", 501);
 
-  const allTools = toolsForPhase(scanPhase);
-  const requestedTools = Array.isArray(options?.tools) ? (options!.tools as string[]) : null;
-  const tools = requestedTools ? allTools.filter((t) => requestedTools.includes(t.name)) : allTools.filter((t) => t.default !== false);
+  const tools = selectTools(scanPhase, options ?? null);
   if (tools.length === 0) return jsonError("No tools selected", 400);
 
-  const timeoutSeconds = 900;
   const id = newScanId();
   const now = new Date().toISOString();
   const rec: ScanRecord = {
@@ -50,30 +83,42 @@ export async function handleCreateScan(req: Request, env: Env, store: ScanStore)
   };
   await store.create(rec);
   await store.addEvent(id, "created", `${scanPhase}:${tools.map((t) => t.name).join(",")}`);
-
-  const stub = env.SCAN_COORDINATOR.get(env.SCAN_COORDINATOR.idFromName(id));
-  await stub.fetch("https://do/start", { method: "POST", body: JSON.stringify({ scanId: id, timeoutSeconds }) });
-
-  const callbackUrl = `${env.AEGIS_ORIGIN}/api/executors/callback/${id}`;
-  const callbackToken = await signCallbackToken(env.CALLBACK_SECRET, id, Date.now() + timeoutSeconds * 1000 + 300_000);
-  try {
-    const result = await dispatchGitHubWorkflow(env, {
-      scanId: id, target: targetUrl, phase: scanPhase, tools, callbackUrl, callbackToken, timeoutSeconds,
-      options: { depth: Number(options?.depth) || 2 },
-    });
-    // Conditional: a cancel may land while the dispatch request is pending.
-    // Only a still-queued scan becomes running; a cancelled one stays cancelled
-    // (its alarm is already deleted, so resurrecting it would lose timeout cover).
-    const running = await store.transition(id, ["queued"], "running", { externalUrl: result.externalUrl });
-    if (running) await store.addEvent(id, "dispatched", result.externalUrl ?? undefined);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const failed = await store.transition(id, ["queued", "running"], "failed", { error: msg });
-    if (failed) await store.addEvent(id, "failed", msg);
-  }
+  await launch(env, store, id, targetUrl, scanPhase, tools, Number(options?.depth) || 2);
 
   const final = await store.get(id);
   return json({ id, status: final!.status }, 201);
+}
+
+/** Re-run a failed or cancelled scan as a NEW scan with the same target and
+ *  options, linked to the original via parentScanId and a retry event. */
+export async function handleRetryScan(_req: Request, env: Env, store: ScanStore, id: string): Promise<Response> {
+  const rec = await store.get(id);
+  if (!rec) return jsonError("Scan not found", 404);
+  if (rec.status !== "failed" && rec.status !== "cancelled") {
+    return jsonError("Only failed or cancelled scans can be re-run", 409);
+  }
+  const limit = await env.SCAN_LIMITER.limit({ key: "scans" });
+  if (!limit.success) return jsonError("Rate limit exceeded", 429);
+  if (rec.phase === "invasion") return jsonError("Invasion phase not yet available (Phase 2)", 501);
+
+  const options = rec.options ? (JSON.parse(rec.options) as Record<string, unknown>) : null;
+  const tools = selectTools(rec.phase, options);
+  if (tools.length === 0) return jsonError("No tools selected", 400);
+
+  const newId = newScanId();
+  const now = new Date().toISOString();
+  const copy: ScanRecord = {
+    id: newId, target: rec.target, phase: rec.phase, status: "queued", parentScanId: rec.id,
+    executor: "github", externalUrl: null, createdAt: now, updatedAt: now,
+    completedAt: null, error: null, options: rec.options,
+  };
+  await store.create(copy);
+  await store.addEvent(newId, "created", `retry:${id} ${rec.phase}:${tools.map((t) => t.name).join(",")}`);
+  await store.addEvent(id, "retried", newId);
+  await launch(env, store, newId, rec.target, rec.phase, tools, Number(options?.depth) || 2);
+
+  const final = await store.get(newId);
+  return json({ id: newId, status: final!.status }, 201);
 }
 
 export async function handleListScans(_env: Env, store: ScanStore): Promise<Response> {

@@ -96,6 +96,7 @@ import "../styles/aegis.css";
         <h2 id="detail-title">Scan</h2>
         <div class="actions">
           <button id="back-btn">Back</button>
+          <button id="retry-btn" hidden>Re-run</button>
           <button id="invade-btn" disabled title="Available in Phase 2">Invoke invasion</button>
         </div>
         <div id="detail-meta"></div>
@@ -142,6 +143,7 @@ import "../styles/aegis.css";
       const scanRows = new Map();
       let lastSig = null;
       let placeholder = null;
+      let detailId = null;
 
       function setText(td, text) {
         const s = String(text);
@@ -158,11 +160,22 @@ import "../styles/aegis.css";
         setText(row.tds[5], s.createdAt.slice(0, 16).replace("T", " "));
         if (row.status !== s.status) {
           if (row.cancel) { row.cancel.remove(); row.cancel = null; }
+          if (row.rerun) { row.rerun.remove(); row.rerun = null; }
           if (s.status === "queued" || s.status === "running") {
             const cancel = el("button", "Cancel");
             cancel.addEventListener("click", async () => { await api(`/api/scans/${s.id}/cancel`, { method: "POST" }); loadScans(true); });
             row.actions.append(cancel);
             row.cancel = cancel;
+          }
+          if (s.status === "failed" || s.status === "cancelled") {
+            const rerun = el("button", "Re-run");
+            rerun.addEventListener("click", async () => {
+              const { id } = await api(`/api/scans/${s.id}/retry`, { method: "POST" });
+              loadScans(true);
+              showDetail(id);
+            });
+            row.actions.append(rerun);
+            row.rerun = rerun;
           }
           row.status = s.status;
         }
@@ -175,7 +188,7 @@ import "../styles/aegis.css";
         view.addEventListener("click", () => showDetail(s.id));
         actions.append(view);
         tr.append(...tds, actions);
-        const row = { tr, tds, actions, cancel: null, status: null };
+        const row = { tr, tds, actions, cancel: null, rerun: null, status: null };
         fillRow(row, s);
         return row;
       }
@@ -230,12 +243,14 @@ import "../styles/aegis.css";
       }
 
       async function showDetail(id) {
+        detailId = id;
         document.querySelector("#list-section").hidden = true;
         document.querySelector("#create-section").hidden = true;
         const detail = document.querySelector("#detail-section");
         detail.hidden = false;
         document.querySelector("#detail-title").textContent = `Scan ${id.slice(0, 8)}`;
         const { scan, events } = await api(`/api/scans/${id}`);
+        document.querySelector("#retry-btn").hidden = !(scan.status === "failed" || scan.status === "cancelled");
         const meta = document.querySelector("#detail-meta");
         clear(meta);
         meta.append(el("p", `${scan.target} | ${scan.phase} | ${scan.status} | ${scan.createdAt}`));
@@ -283,6 +298,17 @@ import "../styles/aegis.css";
           status.textContent = `Started ${id.slice(0, 8)}`;
           loadScans();
         } catch (err) { status.textContent = `Error: ${err.message}`; }
+      });
+
+      document.querySelector("#retry-btn").addEventListener("click", async () => {
+        if (!detailId) return;
+        const btn = document.querySelector("#retry-btn");
+        btn.disabled = true;
+        try {
+          const { id } = await api(`/api/scans/${detailId}/retry`, { method: "POST" });
+          loadScans(true);
+          showDetail(id);
+        } finally { btn.disabled = false; }
       });
 
       document.querySelector("#back-btn").addEventListener("click", () => {
