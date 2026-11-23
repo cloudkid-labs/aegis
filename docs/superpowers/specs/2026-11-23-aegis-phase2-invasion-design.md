@@ -81,8 +81,12 @@ preview and the server-side subset check.
   Explore's target, so `{{target}}`/`{{host}}` resolve to the same site the URLs belong to.
 - Registry: nuclei args `["-l","{{urls}}","-severity","{{severity}}","-jsonl","-o","/out/nuclei.jsonl","-no-color"]`,
   outputFormat `jsonl`, normalizer `nuclei-jsonl`. New `zap-full` entry: image
-  `ghcr.io/zaproxy/zaproxy:stable`, args `["zap-full-scan.py","-t","{{target}}","-J","/out/zap-full.json"]`,
+  `ghcr.io/zaproxy/zaproxy:stable`, args `["zap-full-scan.py","-t","{{target}}","-J","zap-full.json"]`,
   outputFormat json, outputType findings, normalizer `zap-json`, `default: false`.
+- ZAP report paths are relative (`zap.json`, `zap-full.json`) and zap-* containers mount the out
+  dir at `/zap/wrk`, not `/out`: both docker scripts exit 3 unless `/zap/wrk` exists when `-J` is
+  set (the image never creates it), and resolve the report against `base_dir='/zap/wrk/'`
+  (zap-baseline.py/zap-full-scan.py, verified against zaproxy/zaproxy main; fixed in 54d17c8).
 - ZAP exit codes 0/1/2 mean pass/warn/fail-with-findings: for `zap-*` tools any of them is success
   if the output file exists; other codes are failures. The executor chmods the shared out dir
   0777 before zap containers run (image runs as non-root).
