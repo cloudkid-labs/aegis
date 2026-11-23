@@ -27,7 +27,10 @@ export function memoryScanStore(): ScanStore {
       return [...scans.values()]
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
         .slice(0, limit)
-        .map((rec) => ({ ...rec }));
+        .map((rec) => ({
+          ...rec,
+          assetCount: [...assets.values()].filter((a) => a.scanId === rec.id).length,
+        }));
     },
 
     async setStatus(id, status, patch = {}) {

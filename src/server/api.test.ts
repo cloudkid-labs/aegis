@@ -99,6 +99,21 @@ describe("createApiApp", () => {
     expect(body.scans.map((s) => s.id)).toEqual(["0123456789abcdef0123456789abcdef"]);
   });
 
+  it("list response carries each scan's asset count", async () => {
+    const { env, store } = harness();
+    const id = "0123456789abcdef0123456789abcdef";
+    await seed(store, id);
+    await store.insertAssets([{
+      id: "count-asset", scanId: id, type: "subdomain", value: "x.example.com",
+      metadata: null, createdAt: new Date().toISOString(),
+    }]);
+    const app = createApiApp(() => store);
+
+    const res = await app.request("/scans", { headers: auth }, env);
+    const body = (await res.json()) as { scans: (ScanRecord & { assetCount: number })[] };
+    expect(body.scans[0]!.assetCount).toBe(1);
+  });
+
   it("creates a scan, starts the Durable Object and dispatches the workflow", async () => {
     const { env, store, doCalls, dispatches } = harness();
     const app = createApiApp(() => store);
