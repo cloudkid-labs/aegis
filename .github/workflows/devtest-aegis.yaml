@@ -1,0 +1,27 @@
+name: Devtest Aegis
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "astro.config.mjs"
+      - "tools.json"
+      - "migrations/**"
+      - "package.json"
+      - "yarn.lock"
+      - "wrangler.jsonc"
+      - "scripts/**"
+      - ".github/workflows/**"
+
+jobs:
+  devtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: yarn install --frozen-lockfile
+      # Astro build first: the workers tests need ./dist.
+      - run: npm run build
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+      - run: npx wrangler deploy --dry-run
