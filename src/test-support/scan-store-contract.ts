@@ -251,5 +251,22 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       const store = make();
       expect(await store.transition("trans-missing", ["queued"], "running")).toBe(false);
     });
+
+    it("authorization roundtrips and is unique per scan", async () => {
+      const store = make();
+      await store.create(rec("auth-scan"));
+      const a = {
+        scanId: "auth-scan",
+        email: "op@example.com",
+        targets: ["https://x.example/"],
+        tools: ["nuclei"],
+        active: false,
+        confirmedAt: "2026-11-23T00:00:00.000Z",
+      };
+      await store.createAuthorization(a);
+      expect(await store.getAuthorization("auth-scan")).toEqual(a);
+      await expect(store.createAuthorization(a)).rejects.toThrow();
+      expect(await store.getAuthorization("missing")).toBeNull();
+    });
   });
 }

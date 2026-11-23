@@ -126,3 +126,18 @@ export interface ScanEvent {
   detail: string | null;
   createdAt: string;
 }
+
+/**
+ * What an operator confirmed before an invasion scan may run: exactly these
+ * absolute URLs, scanned with exactly these tools. The scan id is the primary
+ * key, so the payload is written once and can never be re-authorized.
+ */
+export interface ScanAuthorization {
+  scanId: string;
+  email: string;
+  targets: string[];
+  tools: string[];
+  /** True iff the opt-in active ZAP profile was selected. */
+  active: boolean;
+  confirmedAt: string;
+}

@@ -1,6 +1,6 @@
 import { CANDIDATE_MARKER } from "./normalizers/explore";
 import type {
-  Asset, ExecutorName, Finding, ScanEvent, ScanRecord, ScanStatus,
+  Asset, ExecutorName, Finding, ScanAuthorization, ScanEvent, ScanRecord, ScanStatus,
 } from "./types";
 
 /**
@@ -27,6 +27,13 @@ export interface ScanStore {
   insertFindings(findings: Finding[]): Promise<void>;
   listFindings(scanId: string): Promise<Finding[]>;
   events(scanId: string): Promise<ScanEvent[]>;
+  /**
+   * Persist what the operator confirmed for an invasion scan. The scan id is
+   * the primary key: a duplicate insert throws, so a scan's authorization is
+   * immutable once written.
+   */
+  createAuthorization(rec: ScanAuthorization): Promise<void>;
+  getAuthorization(scanId: string): Promise<ScanAuthorization | null>;
 }
 
 export interface ScanStatusPatch {
@@ -81,6 +88,15 @@ interface FindingRow {
   created_at: string;
 }
 
+interface AuthorizationRow {
+  scan_id: string;
+  email: string;
+  targets: string;
+  tools: string;
+  active: number;
+  confirmed_at: string;
+}
+
 function toRecord(row: ScanRow): ScanRecord {
   return {
     id: row.id,
@@ -125,6 +141,18 @@ function toFinding(row: FindingRow): Finding {
     remediation: row.remediation,
     rawRef: row.raw_ref,
     createdAt: row.created_at,
+  };
+}
+
+/** D1 stores the lists as JSON text; callers get the arrays back. */
+function toAuthorization(row: AuthorizationRow): ScanAuthorization {
+  return {
+    scanId: row.scan_id,
+    email: row.email,
+    targets: JSON.parse(row.targets) as string[],
+    tools: JSON.parse(row.tools) as string[],
+    active: row.active === 1,
+    confirmedAt: row.confirmed_at,
   };
 }
 
@@ -269,6 +297,31 @@ export function d1ScanStore(db: D1Database): ScanStore {
         .bind(scanId)
         .all<{ event: string; detail: string | null; created_at: string }>();
       return results.map((row) => ({ event: row.event, detail: row.detail, createdAt: row.created_at }));
+    },
+
+    async createAuthorization(rec) {
+      // Plain INSERT on purpose: the primary key is the scan id, so a second
+      // authorization for one scan surfaces as a constraint error, not an
+      // overwrite of what the operator confirmed.
+      await db
+        .prepare(
+          "INSERT INTO scan_authorizations (scan_id, email, targets, tools, active, confirmed_at) VALUES (?1,?2,?3,?4,?5,?6)",
+        )
+        .bind(
+          rec.scanId, rec.email, JSON.stringify(rec.targets), JSON.stringify(rec.tools),
+          rec.active ? 1 : 0, rec.confirmedAt,
+        )
+        .run();
+    },
+
+    async getAuthorization(scanId) {
+      const row = await db
+        .prepare(
+          "SELECT scan_id, email, targets, tools, active, confirmed_at FROM scan_authorizations WHERE scan_id=?1",
+        )
+        .bind(scanId)
+        .first<AuthorizationRow>();
+      return row ? toAuthorization(row) : null;
     },
   };
 }
