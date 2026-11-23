@@ -56,7 +56,7 @@
 		"not_found_handling": "404-page"
 	},
 	"vars": {
-		"GITHUB_OWNER": "rainiersvn",
+		"GITHUB_OWNER": "cloudkid-labs",
 		"GITHUB_REPO": "aegis",
 		"GITHUB_WORKFLOW": "aegis-explore.yml",
 		"AEGIS_ORIGIN": "https://aegis.cloudkid.link",

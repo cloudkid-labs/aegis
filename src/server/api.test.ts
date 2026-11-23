@@ -39,7 +39,7 @@ function harness(overrides: Partial<Env> = {}): Harness {
     AEGIS_ORIGIN: "https://aegis.test",
     CALLBACK_SECRET: "test-callback-secret",
     GITHUB_TOKEN: "test-github-token",
-    GITHUB_OWNER: "rainiersvn",
+    GITHUB_OWNER: "cloudkid-labs",
     GITHUB_REPO: "aegis",
     GITHUB_WORKFLOW: "aegis-explore.yml",
     SCAN_LIMITER: { limit: async () => ({ success: true }) },
