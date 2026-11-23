@@ -280,4 +280,41 @@ describe("callback terminal-state guard", () => {
     expect((await store.get(ID))!.status).toBe("cancelled");
     expect((await store.events(ID)).some((e) => e.event === "completed")).toBe(false);
   });
+
+  it("records output truncation in the completion event", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "running");
+    env.SCAN_COORDINATOR = acceptingDo;
+    env.ARTIFACTS = { put: async () => {} } as unknown as R2Bucket;
+    const app = createApiApp(() => store);
+    const res = await app.request(`/executors/callback/${ID}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ artifacts: [{ tool: "subfinder", format: "json", data: [{ host: "x.example.com" }] }], truncated: ["katana"] }),
+    }, env);
+    expect(res.status).toBe(200);
+    const completed = (await store.events(ID)).find((e) => e.event === "completed");
+    expect(completed?.detail).toContain("truncated");
+    expect(completed?.detail).toContain("katana");
+  });
+});
+
+describe("dispatch terminal-state guard", () => {
+  it("a cancel landing during dispatch is not overwritten by running", async () => {
+    const { env, store } = harness();
+    const app = createApiApp(() => store);
+    // The GitHub dispatch request is pending; a cancel lands before it resolves.
+    vi.stubGlobal("fetch", async () => {
+      const [rec] = await store.list(10);
+      await store.transition(rec!.id, ["queued", "running"], "cancelled");
+      return new Response(null, { status: 204 });
+    });
+    const res = await app.request("/scans", {
+      method: "POST", headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ target: "https://example.com" }),
+    }, env);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; status: string };
+    expect(body.status).toBe("cancelled");
+    expect((await store.get(body.id))!.status).toBe("cancelled");
+  });
 });

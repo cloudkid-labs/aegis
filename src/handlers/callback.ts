@@ -23,7 +23,7 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
 
   const body = await readJsonBody(req, CALLBACK_BODY_LIMIT);
   if (!body.ok) return body.response;
-  const { artifacts, error, failures } = body.value as { artifacts?: Artifact[]; error?: string; failures?: string[] };
+  const { artifacts, error, failures, truncated } = body.value as { artifacts?: Artifact[]; error?: string; failures?: string[]; truncated?: string[] };
 
   if (typeof error === "string" && error.length > 0) {
     const failed = await store.transition(scanId, ["queued", "running"], "failed", { error });
@@ -54,7 +54,8 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
     return json({ ok: true, status: (await store.get(scanId))!.status });
   }
   const failNote = Array.isArray(failures) && failures.length > 0 ? `; ${failures.length} tool failure(s): ${failures.join(", ")}` : "";
-  await store.addEvent(scanId, "completed", `${allAssets.length} assets${failNote}`);
+  const truncNote = Array.isArray(truncated) && truncated.length > 0 ? `; output truncated to fit callback limit: ${truncated.join(", ")}` : "";
+  await store.addEvent(scanId, "completed", `${allAssets.length} assets${failNote}${truncNote}`);
 
   return json({ ok: true, assets: allAssets.length });
 }

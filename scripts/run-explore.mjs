@@ -16,7 +16,11 @@ const options = JSON.parse(process.env.OPTIONS_JSON ?? "{}");
 const callbackUrl = process.env.CB_URL ?? "";
 const callbackToken = process.env.CB_TOKEN ?? "";
 
-const host = target.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
+// Derive the host from URL components, not string splitting: a target with
+// credentials (https://user:pass@host/) or an IPv6 literal must not yield
+// "user" or "[2606" as the {{host}} substituted into host-based tools.
+let host = "";
+try { host = new URL(target).hostname; } catch { host = ""; }
 const depth = Number.isInteger(Number(options.depth)) && Number(options.depth) > 0 ? String(options.depth) : "2";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../tools.json", import.meta.url), "utf8"));
@@ -44,6 +48,33 @@ function outputPath(argv) {
   return null;
 }
 
+// handleCallback rejects bodies over 5 MiB (readJsonBody). Stay under it so a
+// large recon never 413s into a timeout with the single-use token already
+// consumed: fit what we can, truncate the rest, and report what was cut.
+const BUDGET = 4 * 1024 * 1024;
+let used = 0;
+const truncated = [];
+function addArtifact(name, format, data) {
+  const size = JSON.stringify(data).length;
+  if (used + size <= BUDGET) { used += size; artifacts.push({ tool: name, format, data }); return; }
+  const remaining = BUDGET - used;
+  let fit = null;
+  if (Array.isArray(data)) {
+    const kept = [];
+    let acc = 2;
+    for (const entry of data) {
+      const s = JSON.stringify(entry).length + 1;
+      if (acc + s > remaining) break;
+      kept.push(entry); acc += s;
+    }
+    if (kept.length > 0) fit = kept;
+  } else if (typeof data === "string" && remaining > 0) {
+    fit = data.slice(0, remaining);
+  }
+  truncated.push(name);
+  if (fit !== null) { used = BUDGET; artifacts.push({ tool: name, format, data: fit }); }
+}
+
 for (const tool of tools) {
   const argv = tool.args.map(resolve);
   console.log(`=== Running ${tool.name} (${tool.image}) ===`);
@@ -57,14 +88,14 @@ for (const tool of tools) {
   if (tool.outputFormat === "text") data = raw;
   else if (tool.outputFormat === "sarif") data = JSON.parse(raw);
   else data = raw.split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  artifacts.push({ tool: tool.name, format: tool.outputFormat, data });
+  addArtifact(tool.name, tool.outputFormat, data);
 }
 
 // Every selected tool failed and nothing was produced: report failure, not a
 // misleading "completed with zero discoveries".
 const body = artifacts.length === 0 && failures.length > 0
   ? JSON.stringify({ error: `tools failed: ${failures.join(", ")}` })
-  : JSON.stringify({ artifacts, failures });
+  : JSON.stringify({ artifacts, failures, truncated });
 
 const res = await fetch(callbackUrl, {
   method: "POST",

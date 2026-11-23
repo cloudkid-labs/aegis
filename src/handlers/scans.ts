@@ -61,12 +61,15 @@ export async function handleCreateScan(req: Request, env: Env, store: ScanStore)
       scanId: id, target: targetUrl, phase: scanPhase, tools, callbackUrl, callbackToken, timeoutSeconds,
       options: { depth: Number(options?.depth) || 2 },
     });
-    await store.setStatus(id, "running", { externalUrl: result.externalUrl });
-    await store.addEvent(id, "dispatched", result.externalUrl ?? undefined);
+    // Conditional: a cancel may land while the dispatch request is pending.
+    // Only a still-queued scan becomes running; a cancelled one stays cancelled
+    // (its alarm is already deleted, so resurrecting it would lose timeout cover).
+    const running = await store.transition(id, ["queued"], "running", { externalUrl: result.externalUrl });
+    if (running) await store.addEvent(id, "dispatched", result.externalUrl ?? undefined);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await store.setStatus(id, "failed", { error: msg });
-    await store.addEvent(id, "failed", msg);
+    const failed = await store.transition(id, ["queued", "running"], "failed", { error: msg });
+    if (failed) await store.addEvent(id, "failed", msg);
   }
 
   const final = await store.get(id);
