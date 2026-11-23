@@ -135,6 +135,21 @@ function addArtifact(name, format, data, raw) {
     if (kept.length > 0) fit = kept;
   } else if (typeof data === "string" && remaining > 0) {
     fit = data.slice(0, remaining);
+  } else if (data && typeof data === "object" && Array.isArray(data.site)) {
+    // ZAP report: drop whole alerts from the tail until the rest fits. An
+    // over-budget report must keep its shape and as many findings as the
+    // budget allows — discarding it whole would complete the scan with zero
+    // findings and no failure, hiding the loss.
+    const clone = JSON.parse(JSON.stringify(data));
+    const sites = Array.isArray(clone.site) ? clone.site : [];
+    while (JSON.stringify(clone).length > remaining) {
+      const site = sites[sites.length - 1];
+      const alerts = site && Array.isArray(site.alerts) ? site.alerts : [];
+      if (alerts.length > 0) alerts.pop();
+      else if (sites.length > 0) sites.pop();
+      else break;
+    }
+    if (JSON.stringify(clone).length <= remaining) fit = clone;
   }
   truncated.push(name);
   if (fit !== null) { used = BUDGET; artifacts.push({ tool: name, format, data: fit }); }

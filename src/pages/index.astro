@@ -445,6 +445,18 @@ import "../styles/aegis.css";
         const detail = document.querySelector("#detail-section");
         detail.hidden = false;
         document.querySelector("#detail-title").textContent = `Scan ${id.slice(0, 8)}`;
+        // Until this scan's metadata lands, the panel must not act on the
+        // previous one: Invade would chain off the old scan and retry would
+        // re-run it. Clear the context synchronously, before the first await.
+        detailScan = null;
+        detailFindings = [];
+        findingsError = null;
+        detailAssets = [];
+        lastAssetSig = null;
+        renderAssets();
+        document.querySelector("#invade-btn").disabled = true;
+        document.querySelector("#retry-btn").hidden = true;
+        document.querySelector("#findings-section").hidden = true;
         const { scan, events } = await api(`/api/scans/${id}`);
         // Every await below can outlive the view: fast View-A → Back → View-B
         // leaves A's late response landing on B's panel (title says B, meta and
