@@ -268,5 +268,24 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       await expect(store.createAuthorization(a)).rejects.toThrow();
       expect(await store.getAuthorization("missing")).toBeNull();
     });
+
+    it("authorization preserves active and multi-entry lists", async () => {
+      // active: true is the zap-full opt-in: a write side stuck at 0 would
+      // silently downgrade the authorization, so it is asserted separately
+      // from the active: false case above. Two entries per list catch a
+      // serialiser that only carries the first.
+      const store = make();
+      await store.create(rec("auth-full"));
+      const a = {
+        scanId: "auth-full",
+        email: "zap@example.com",
+        targets: ["https://a.example/", "https://b.example:8443/"],
+        tools: ["nuclei", "zap-full"],
+        active: true,
+        confirmedAt: "2026-11-23T01:00:00.000Z",
+      };
+      await store.createAuthorization(a);
+      expect(await store.getAuthorization("auth-full")).toEqual(a);
+    });
   });
 }
