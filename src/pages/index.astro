@@ -11,6 +11,8 @@ import "../styles/aegis.css";
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0f1216" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="description" content="Aegis: private recon and pentest console for allowlisted operators, running open-source tooling on Cloudflare Workers." />
     <title>Aegis: recon and pentest</title>
   </head>
@@ -133,43 +135,97 @@ import "../styles/aegis.css";
       }
       function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
-      async function loadScans() {
-        const tbody = document.querySelector("#scans-table tbody");
-        clear(tbody);
+      // Keyed row cache + change signature: the 5s poll must not repaint the
+      // table when nothing changed, and must not recreate rows (which drops
+      // focus and flickers) when something did. Cells are updated in place;
+      // the Cancel button is rebuilt only when a scan's status flips.
+      const scanRows = new Map();
+      let lastSig = null;
+      let placeholder = null;
+
+      function setText(td, text) {
+        const s = String(text);
+        if (td.textContent !== s) td.textContent = s;
+      }
+      function fillRow(row, s) {
+        setText(row.tds[0], s.id.slice(0, 8));
+        setText(row.tds[1], s.target);
+        setText(row.tds[2], s.phase);
+        setText(row.tds[3], s.status);
+        const cls = `status-${s.status}`;
+        if (row.tds[3].className !== cls) row.tds[3].className = cls;
+        setText(row.tds[4], s.assetCount ?? "—");
+        setText(row.tds[5], s.createdAt.slice(0, 16).replace("T", " "));
+        if (row.status !== s.status) {
+          if (row.cancel) { row.cancel.remove(); row.cancel = null; }
+          if (s.status === "queued" || s.status === "running") {
+            const cancel = el("button", "Cancel");
+            cancel.addEventListener("click", async () => { await api(`/api/scans/${s.id}/cancel`, { method: "POST" }); loadScans(true); });
+            row.actions.append(cancel);
+            row.cancel = cancel;
+          }
+          row.status = s.status;
+        }
+      }
+      function buildRow(s) {
+        const tr = el("tr");
+        const tds = [el("td"), el("td"), el("td"), el("td"), el("td"), el("td")];
+        const actions = el("td");
+        const view = el("button", "View");
+        view.addEventListener("click", () => showDetail(s.id));
+        actions.append(view);
+        tr.append(...tds, actions);
+        const row = { tr, tds, actions, cancel: null, status: null };
+        fillRow(row, s);
+        return row;
+      }
+      function showPlaceholder(tbody, text) {
+        if (!placeholder) {
+          placeholder = el("tr");
+          placeholder.append(el("td", "", { colspan: "7" }));
+        }
+        setText(placeholder.firstChild, text);
+        if (placeholder.parentNode !== tbody) tbody.append(placeholder);
+      }
+      function hidePlaceholder() {
+        if (placeholder && placeholder.parentNode) placeholder.remove();
+      }
+
+      async function loadScans(force = false) {
         const phaseFilter = document.querySelector("#filter-phase").value;
         const statusFilter = document.querySelector("#filter-status").value;
+        let list = [];
+        let error = null;
         try {
           const { scans } = await api("/api/scans");
-          const filtered = scans.filter((s) => (!phaseFilter || s.phase === phaseFilter) && (!statusFilter || s.status === statusFilter));
-          for (const s of filtered) {
-            const tr = el("tr");
-            const statusTd = el("td", s.status);
-            statusTd.className = `status-${s.status}`;
-            tr.append(el("td", s.id.slice(0, 8)), el("td", s.target), el("td", s.phase), statusTd, el("td", s.assetCount ?? "—"), el("td", s.createdAt.slice(0, 16).replace("T", " ")));
-            const actions = el("td");
-            const view = el("button", "View");
-            view.addEventListener("click", () => showDetail(s.id));
-            actions.append(view);
-            if (s.status === "queued" || s.status === "running") {
-              const cancel = el("button", "Cancel");
-              cancel.addEventListener("click", async () => { await api(`/api/scans/${s.id}/cancel`, { method: "POST" }); loadScans(); });
-              actions.append(cancel);
-            }
-            tr.append(actions);
-            tbody.append(tr);
-          }
-          if (filtered.length === 0) {
-            // DOM append() returns undefined, so a row and its cell are built
-            // and appended as separate statements. Chaining .append() here
-            // silently threw before anything rendered.
-            const tr = el("tr");
-            tr.append(el("td", "No scans yet.", { colspan: "7" }));
-            tbody.append(tr);
-          }
-        } catch (err) {
-          const tr = el("tr");
-          tr.append(el("td", String(err.message), { colspan: "7" }));
-          tbody.append(tr);
+          list = scans.filter((s) => (!phaseFilter || s.phase === phaseFilter) && (!statusFilter || s.status === statusFilter));
+        } catch (err) { error = String(err.message); }
+
+        const sig = JSON.stringify([phaseFilter, statusFilter, error, list.map((s) => [s.id, s.target, s.phase, s.status, s.assetCount ?? null, s.createdAt])]);
+        if (!force && sig === lastSig) return; // unchanged: no DOM writes at all
+        lastSig = sig;
+
+        const tbody = document.querySelector("#scans-table tbody");
+        if (error || list.length === 0) {
+          for (const [, row] of scanRows) row.tr.remove();
+          scanRows.clear();
+          showPlaceholder(tbody, error || "No scans yet.");
+          return;
+        }
+        hidePlaceholder();
+        const seen = new Set();
+        let prev = null;
+        for (const s of list) {
+          seen.add(s.id);
+          let row = scanRows.get(s.id);
+          if (!row) { row = buildRow(s); scanRows.set(s.id, row); }
+          else fillRow(row, s);
+          const ref = prev ? prev.nextSibling : tbody.firstChild;
+          if (ref !== row.tr) tbody.insertBefore(row.tr, ref);
+          prev = row.tr;
+        }
+        for (const [id, row] of scanRows) {
+          if (!seen.has(id)) { row.tr.remove(); scanRows.delete(id); }
         }
       }
 
@@ -236,10 +292,18 @@ import "../styles/aegis.css";
         loadScans();
       });
 
-      document.querySelector("#filter-phase").addEventListener("change", loadScans);
-      document.querySelector("#filter-status").addEventListener("change", loadScans);
+      document.querySelector("#filter-phase").addEventListener("change", () => loadScans(true));
+      document.querySelector("#filter-status").addEventListener("change", () => loadScans(true));
       bootstrap();
-      setInterval(() => { if (!document.querySelector("#list-section").hidden) loadScans(); }, 5000);
+      // Poll only while the list is on screen and the tab is visible; a hidden
+      // tab must not keep fetching and repainting in the background.
+      setInterval(() => {
+        if (document.hidden) return;
+        if (!document.querySelector("#list-section").hidden) loadScans();
+      }, 5000);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && !document.querySelector("#list-section").hidden) loadScans();
+      });
     </script>
   </body>
 </html>

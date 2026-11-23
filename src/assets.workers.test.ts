@@ -61,4 +61,14 @@ describe("Astro static output via ASSETS", () => {
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
+
+  it("serves the favicon and links it from both pages", async () => {
+    for (const path of ["/", "/does-not-exist"]) {
+      const html = await (await SELF.fetch(`https://aegis.test${path}`)).text();
+      expect(html).toContain('href="/favicon.svg"');
+    }
+    const res = await SELF.fetch("https://aegis.test/favicon.svg");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+  });
 });
