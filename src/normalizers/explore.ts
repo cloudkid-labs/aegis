@@ -87,15 +87,18 @@ export const normalizeNaabu = recordNormalizer({
   },
 });
 
-// alterx emits plain text lines, not JSON records, so it does not share the
-// record factory's parse step.
-export async function normalizeAlterx(data: unknown, scanId: string, now: string): Promise<Asset[]> {
-  const lines = typeof data === "string" ? data.split("\n").filter(Boolean) : Array.isArray(data) ? data.map(String) : [];
-  const out: Asset[] = [];
-  for (const host of lines) {
-    const trimmed = host.trim();
-    if (!trimmed) continue;
-    out.push({ id: await assetId(scanId, "subdomain", trimmed), scanId, type: "subdomain", value: trimmed, metadata: JSON.stringify({ source: "alterx", candidate: true }), createdAt: now });
-  }
-  return out;
-}
+/** Serialized candidate flag carried by scans stored before alterx output was
+ *  resolved. The D1 reads mirror this exact substring, so changing the old
+ *  metadata shape here would silently un-hide those rows. */
+export const CANDIDATE_MARKER = '"candidate":true';
+
+// alterx permutations go through dnsx before storage (registry resolveWith),
+// so what arrives here is dnsx-style resolution records, not a wordlist.
+export const normalizeAlterxResolved = recordNormalizer({
+  type: "subdomain",
+  idKind: "dns",
+  extract: (e) => {
+    const host = e.host as string | undefined;
+    return host ? { value: host, metadata: JSON.stringify({ a: e.a ?? [], cname: e.cname ?? [], resolved: true, source: "alterx" }) } : null;
+  },
+});

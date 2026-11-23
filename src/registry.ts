@@ -44,7 +44,7 @@ export function parseRegistry(input: unknown): ToolEntry[] {
   if (tools.length === 0) fail("root", "tools must not be empty");
 
   const seen = new Set<string>();
-  return tools.map((candidate, index): ToolEntry => {
+  const entries = tools.map((candidate, index): ToolEntry => {
     if (typeof candidate !== "object" || candidate === null) fail(`tools[${index}]`, "must be an object");
     const entry = candidate as Record<string, unknown>;
 
@@ -76,6 +76,10 @@ export function parseRegistry(input: unknown): ToolEntry[] {
       fail(`tools[${index}] (${name})`, "invasion tools must emit findings");
     }
 
+    const resolveWith = entry.resolveWith === undefined
+      ? undefined
+      : nonEmptyString(entry.resolveWith, `tools[${index}] (${name})`, "resolveWith");
+
     return {
       name: name as ToolEntry["name"],
       phase,
@@ -86,8 +90,16 @@ export function parseRegistry(input: unknown): ToolEntry[] {
       outputType,
       normalizer,
       ...(entry.default === false ? { default: false } : {}),
+      ...(resolveWith !== undefined ? { resolveWith } : {}),
     };
   });
+
+  for (const entry of entries) {
+    if (entry.resolveWith && !entries.some((other) => other.name === entry.resolveWith)) {
+      fail(`tool ${entry.name}`, `resolveWith "${entry.resolveWith}" names no entry in this registry`);
+    }
+  }
+  return entries;
 }
 
 // Validated once at module load: a malformed registry fails the Worker's

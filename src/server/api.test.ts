@@ -311,6 +311,35 @@ describe("callback terminal-state guard", () => {
     expect(completed?.detail).toContain("truncated");
     expect(completed?.detail).toContain("katana");
   });
+
+  it("stores an artifact's raw wordlist in R2 and ingests only the resolved records", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "running");
+    env.SCAN_COORDINATOR = acceptingDo;
+    const puts: { key: string; body: string; type?: string }[] = [];
+    env.ARTIFACTS = {
+      put: async (key: string, body: string, opts?: { httpMetadata?: { contentType?: string } }) => {
+        puts.push({ key, body, type: opts?.httpMetadata?.contentType });
+      },
+    } as unknown as R2Bucket;
+    const app = createApiApp(() => store);
+    const res = await app.request(`/executors/callback/${ID}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        artifacts: [{
+          tool: "alterx", format: "json",
+          data: [{ host: "x.example.com", a: ["1.2.3.4"] }],
+          raw: "x.example.com\ny.example.com\n",
+        }],
+      }),
+    }, env);
+    expect(res.status).toBe(200);
+    expect(puts.length).toBe(1);
+    expect(puts[0]!.body).toBe("x.example.com\ny.example.com\n");
+    expect(puts[0]!.key.endsWith(".txt")).toBe(true);
+    expect(puts[0]!.type).toContain("text/plain");
+    expect((await store.listAssets(ID)).map((a) => a.value)).toEqual(["x.example.com"]);
+  });
 });
 
 describe("retry", () => {

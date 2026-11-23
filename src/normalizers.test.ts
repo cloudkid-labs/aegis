@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "./auth";
 import { normalize, hasNormalizer } from "./normalizers/index";
-import { normalizeSubfinder, normalizeHttpx, normalizeKatana, normalizeDnsx, normalizeNaabu, normalizeAlterx } from "./normalizers/explore";
+import { normalizeSubfinder, normalizeHttpx, normalizeKatana, normalizeDnsx, normalizeNaabu, normalizeAlterxResolved } from "./normalizers/explore";
 
 const SCAN = "scan-test-1";
 const NOW = "2026-11-22T00:00:00.000Z";
@@ -48,12 +48,14 @@ describe("explore normalizers", () => {
     expect(assets[0]!.value).toBe("example.com:8443");
   });
 
-  it("alterx: text lines → candidate subdomains", async () => {
-    const data = "dev-api.example.com\nstaging.example.com\n";
-    const assets = await normalizeAlterx(data, SCAN, NOW);
-    expect(assets.length).toBe(2);
+  it("alterx: resolved dnsx records → subdomains tagged alterx, never candidates", async () => {
+    const data = [{ host: "dev-api.example.com", a: ["1.2.3.4"] }];
+    const assets = await normalizeAlterxResolved(data, SCAN, NOW);
+    expect(assets.length).toBe(1);
     const meta = JSON.parse(assets[0]!.metadata!);
-    expect(meta.candidate).toBe(true);
+    expect(meta.resolved).toBe(true);
+    expect(meta.source).toBe("alterx");
+    expect(meta.candidate).toBeUndefined();
   });
 
   it("handles string JSONL input", async () => {

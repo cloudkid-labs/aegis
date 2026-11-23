@@ -13,6 +13,14 @@ export function memoryScanStore(): ScanStore {
   const findings = new Map<string, Finding>();
   const events = new Map<string, ScanEvent[]>();
 
+  // Mirrors the D1 reads' CANDIDATE_MARKER filter: old unresolved alterx
+  // permutations are evidence, not discoveries.
+  const isCandidate = (metadata: string | null): boolean => {
+    if (!metadata) return false;
+    try { return (JSON.parse(metadata) as { candidate?: unknown }).candidate === true; } catch { return false; }
+  };
+  const discovered = (scanId: string) => [...assets.values()].filter((a) => a.scanId === scanId && !isCandidate(a.metadata));
+
   return {
     async create(rec) {
       scans.set(rec.id, { ...rec });
@@ -29,7 +37,7 @@ export function memoryScanStore(): ScanStore {
         .slice(0, limit)
         .map((rec) => ({
           ...rec,
-          assetCount: [...assets.values()].filter((a) => a.scanId === rec.id).length,
+          assetCount: discovered(rec.id).length,
         }));
     },
 
@@ -81,8 +89,7 @@ export function memoryScanStore(): ScanStore {
     },
 
     async listAssets(scanId) {
-      return [...assets.values()]
-        .filter((asset) => asset.scanId === scanId)
+      return discovered(scanId)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
         .map((asset) => ({ ...asset }));
     },

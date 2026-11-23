@@ -44,6 +44,21 @@ describe("loadRegistry", () => {
   });
 });
 
+describe("resolveWith", () => {
+  it("alterx resolves its permutations through dnsx before storage", () => {
+    expect(getTool("alterx")!.resolveWith).toBe("dnsx");
+  });
+
+  it("accepts resolveWith naming another entry in the same registry", () => {
+    const tools = parseRegistry({ tools: [base({ name: "perm", resolveWith: "dnsx" }), base({ name: "dnsx" })] });
+    expect(tools[0]!.resolveWith).toBe("dnsx");
+  });
+
+  it("rejects resolveWith naming an unknown tool", () => {
+    expect(() => parseRegistry({ tools: [base({ resolveWith: "nope" })] })).toThrow(/resolveWith/);
+  });
+});
+
 describe("toolsForPhase", () => {
   it("splits explore from invasion in registry order", () => {
     expect(toolsForPhase("explore").map((t) => t.name)).toEqual(EXPLORE);

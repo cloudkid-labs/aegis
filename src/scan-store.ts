@@ -1,3 +1,4 @@
+import { CANDIDATE_MARKER } from "./normalizers/explore";
 import type {
   Asset, ExecutorName, Finding, ScanEvent, ScanRecord, ScanStatus,
 } from "./types";
@@ -159,6 +160,7 @@ export function d1ScanStore(db: D1Database): ScanStore {
         .prepare(
           `SELECT ${SCAN_COLS_S}, COUNT(a.id) AS asset_count
              FROM scans s LEFT JOIN assets a ON a.scan_id = s.id
+               AND (a.metadata IS NULL OR a.metadata NOT LIKE '%${CANDIDATE_MARKER}%')
             GROUP BY s.id
             ORDER BY s.created_at DESC, s.id DESC LIMIT ?1`,
         )
@@ -225,8 +227,14 @@ export function d1ScanStore(db: D1Database): ScanStore {
     },
 
     async listAssets(scanId) {
+      // Unresolved alterx permutations from old scans stay in D1 as evidence
+      // but are not discoveries; the marker is our own serialized constant.
       const { results } = await db
-        .prepare(`SELECT ${ASSET_COLS} FROM assets WHERE scan_id=?1 ORDER BY created_at, id`)
+        .prepare(
+          `SELECT ${ASSET_COLS} FROM assets
+            WHERE scan_id=?1 AND (metadata IS NULL OR metadata NOT LIKE '%${CANDIDATE_MARKER}%')
+            ORDER BY created_at, id`,
+        )
         .bind(scanId)
         .all<AssetRow>();
       return results.map(toAsset);
