@@ -446,6 +446,11 @@ import "../styles/aegis.css";
         detail.hidden = false;
         document.querySelector("#detail-title").textContent = `Scan ${id.slice(0, 8)}`;
         const { scan, events } = await api(`/api/scans/${id}`);
+        // Every await below can outlive the view: fast View-A → Back → View-B
+        // leaves A's late response landing on B's panel (title says B, meta and
+        // assets say A, and Invade would chain a new scan off parent A). Each
+        // response is only applied while its id is still the one on screen.
+        if (detailId !== id) return;
         detailScan = scan;
         document.querySelector("#retry-btn").hidden = !(scan.status === "failed" || scan.status === "cancelled");
         // An invasion chains off exactly one thing: a completed explore scan.
@@ -460,6 +465,7 @@ import "../styles/aegis.css";
         meta.append(el("p", `${scan.target} | ${scan.phase} | ${scan.status} | ${scan.createdAt}`));
         for (const ev of events || []) meta.append(el("p", `${ev.createdAt} — ${ev.event}${ev.detail ? ": " + ev.detail : ""}`));
         const { assets } = await api(`/api/scans/${id}/assets`);
+        if (detailId !== id) return;
         detailAssets = assets;
         lastAssetSig = null;
         renderAssets();
@@ -470,8 +476,14 @@ import "../styles/aegis.css";
         if (scan.phase === "invasion") {
           try {
             const { findings } = await api(`/api/scans/${id}/findings`);
+            if (detailId !== id) return;
             detailFindings = sortFindings(findings);
-          } catch (err) { findingsError = String(err.message); }
+          } catch (err) {
+            // A rejection is the same race: A's late failure must not paint an
+            // error over B's table.
+            if (detailId !== id) return;
+            findingsError = String(err.message);
+          }
           buildToolFilter();
         }
         renderFindings();
@@ -663,7 +675,11 @@ import "../styles/aegis.css";
 
       async function openInvasionConfirm() {
         if (!detailScan || detailScan.phase !== "explore" || detailScan.status !== "completed") return;
-        invasionParentId = detailScan.id;
+        // The panel can be cancelled and reopened for another scan while the
+        // preview is in flight; that response belongs to the panel that asked,
+        // not the one now on screen.
+        const parentId = detailScan.id;
+        invasionParentId = parentId;
         const status = document.querySelector("#invasion-status");
         const confirmBtn = document.querySelector("#invasion-confirm-btn");
         clear(document.querySelector("#invasion-targets"));
@@ -678,13 +694,15 @@ import "../styles/aegis.css";
         document.querySelector("#detail-section").hidden = true;
         document.querySelector("#invasion-confirm").hidden = false;
         try {
-          const preview = await api(`/api/scans/${invasionParentId}/invasion-preview`);
+          const preview = await api(`/api/scans/${parentId}/invasion-preview`);
+          if (invasionParentId !== parentId || document.querySelector("#invasion-confirm").hidden) return;
           renderInvasionTargets(preview);
           status.textContent = preview.targets.length === 0
             ? "This scan has no live URLs left to attack. Run a new explore scan first."
             : "";
           confirmBtn.disabled = preview.targets.length === 0;
         } catch (err) {
+          if (invasionParentId !== parentId || document.querySelector("#invasion-confirm").hidden) return;
           status.textContent = `Could not load the preview: ${err.message}`;
         }
       }
