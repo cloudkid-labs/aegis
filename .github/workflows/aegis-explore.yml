@@ -1,4 +1,7 @@
 name: Aegis Explore
+# Display-only: makes each run identifiable by target in the Actions UI. These
+# interpolate into names, never into shell source (inputs stay in env below).
+run-name: Explore ${{ inputs.target_url }} (${{ inputs.scan_id }})
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +16,7 @@ on:
 
 jobs:
   explore:
+    name: Explore ${{ inputs.target_url }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
