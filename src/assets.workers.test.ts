@@ -66,6 +66,22 @@ describe("Astro static output via ASSETS", () => {
     for (const id of ["scan-search", "asset-search"]) expect(js).toContain(id);
   });
 
+  it("ships the decorative recon graph on the signed-out page", async () => {
+    const html = await (await SELF.fetch("https://aegis.test/")).text();
+    expect(html).toMatch(
+      /<svg[^>]*class="recon-graph"[^>]*aria-hidden="true"|<svg[^>]*aria-hidden="true"[^>]*class="recon-graph"/,
+    );
+  });
+
+  it("renders the graph statically under reduced motion", async () => {
+    const html = await (await SELF.fetch("https://aegis.test/")).text();
+    const href = html.match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+    expect(href).toBeTruthy();
+    const css = await (await SELF.fetch(`https://aegis.test${href}`)).text();
+    // The minifier drops the space after the colon, so match it tolerantly.
+    expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*recon-graph/);
+  });
+
   it("serves the built 404 page with a 404 status", async () => {
     const res = await SELF.fetch("https://aegis.test/does-not-exist");
     expect(res.status).toBe(404);
