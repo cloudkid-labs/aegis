@@ -226,13 +226,8 @@ async function createInvasion(
     active,
     confirmedAt: now,
   };
-  try {
-    await store.createAuthorization(authorizationRec);
-  } catch {
-    // The scan id is the authorization key. A conflict means this id was
-    // already confirmed, so the payload must not be overwritten or launched.
-    return jsonError("Scan already authorized", 409);
-  }
+  const authorized = await persistAuthorization(store, authorizationRec);
+  if (authorized) return authorized;
   await store.addEvent(id, "created", `invasion:${selectedToolNames.join(",")}`);
   await store.addEvent(id, "authorized", authorizeDetail(authorizationRec));
   await launch(env, store, id, targetUrl, "invasion", selectedTools, 2, {
@@ -248,6 +243,38 @@ async function createInvasion(
 /** Audit line for both create and retry: who confirmed, how many, which profile. */
 function authorizeDetail(authorization: ScanAuthorization): string {
   return `${authorization.email}; targets=${authorization.targets.length}; active=${authorization.active}`;
+}
+
+/**
+ * Persist the authorization row and turn a failure into the right response.
+ *
+ * Only a primary-key conflict means "this scan id was already confirmed".
+ * Re-reading the row is the honest probe for that: the row is either there or
+ * it is not, with no dependence on D1's driver wording. Every other failure
+ * (an outage, a broken statement) must not masquerade as a conflict and leave
+ * a queued scan that no alarm will ever move, so it fails the scan and answers
+ * 500. Returns null on success.
+ */
+async function persistAuthorization(
+  store: ScanStore, authorization: ScanAuthorization,
+): Promise<Response | null> {
+  try {
+    await store.createAuthorization(authorization);
+    return null;
+  } catch (err) {
+    let existing: ScanAuthorization | null = null;
+    try { existing = await store.getAuthorization(authorization.scanId); } catch { /* unreadable: treat as unwritten */ }
+    const detail = existing ? "Scan already authorized" : (err instanceof Error ? err.message : String(err));
+    // No path below launches, so the queued row must not keep advertising
+    // itself as pending work. Retried copies land here the same way.
+    try {
+      const failed = await store.transition(authorization.scanId, ["queued"], "failed", { error: detail });
+      if (failed) await store.addEvent(authorization.scanId, "failed", detail);
+    } catch { /* the authorization failure is already being reported */ }
+    return existing
+      ? jsonError("Scan already authorized", 409)
+      : jsonError("Authorization could not be stored", 500);
+  }
 }
 
 /** Re-run a failed or cancelled scan as a NEW scan with the same target and
@@ -303,14 +330,22 @@ async function retryInvasion(env: Env, store: ScanStore, rec: ScanRecord): Promi
 
   if (rec.parentScanId) {
     const parent = await store.get(rec.parentScanId);
-    if (!parent || parent.phase !== "explore" || parent.status !== "completed") {
-      return jsonError("Parent scan is no longer available", 409);
-    }
-    const allowed = new Set(
-      selectInvasionTargets(await store.listAssets(parent.id)).targets.map((t) => t.url),
-    );
-    if (!authorization.targets.every((target) => allowed.has(target))) {
-      return jsonError("Stored targets are no longer allowed by the parent scan", 409);
+    if (!parent) return jsonError("Parent scan is no longer available", 409);
+    // Only an explore parent defines the allowed URL set. A standalone scan's
+    // retry records the previous invasion row as lineage, so a retry-of-retry
+    // must not be re-validated against it: those targets were checked when the
+    // authorization was first written. A chained scan keeps its explore parent
+    // across retries, so its live subset check still runs.
+    if (parent.phase === "explore") {
+      if (parent.status !== "completed") {
+        return jsonError("Parent scan is no longer available", 409);
+      }
+      const allowed = new Set(
+        selectInvasionTargets(await store.listAssets(parent.id)).targets.map((t) => t.url),
+      );
+      if (!authorization.targets.every((target) => allowed.has(target))) {
+        return jsonError("Stored targets are no longer allowed by the parent scan", 409);
+      }
     }
   }
 
@@ -339,11 +374,8 @@ async function retryInvasion(env: Env, store: ScanStore, rec: ScanRecord): Promi
     active: authorization.active,
     confirmedAt: authorization.confirmedAt,
   };
-  try {
-    await store.createAuthorization(authorizationRec);
-  } catch {
-    return jsonError("Scan already authorized", 409);
-  }
+  const authorized = await persistAuthorization(store, authorizationRec);
+  if (authorized) return authorized;
   await store.addEvent(newId, "created", `retry:${rec.id} invasion:${tools.map((t) => t.name).join(",")}`);
   await store.addEvent(newId, "authorized", authorizeDetail(authorizationRec));
   await store.addEvent(rec.id, "retried", newId);

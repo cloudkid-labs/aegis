@@ -6,7 +6,7 @@ import { SESSION_COOKIE } from "../session";
 import { memorySessionStore } from "../session-store";
 import { nucleiRecord } from "../test-support/fixtures";
 import { memoryScanStore } from "../test-support/memory-store";
-import type { Asset, Finding, ScanRecord, Severity } from "../types";
+import type { Asset, Finding, ScanAuthorization, ScanRecord, Severity } from "../types";
 import { createApiApp } from "./api";
 
 const KEY = "test-key";
@@ -644,11 +644,16 @@ describe("invasion create validation", () => {
   });
 
   it("maps an authorization conflict to 409 without dispatching", async () => {
-    const { env, store, doCalls } = harness();
+    const { env, store, doCalls, dispatches } = harness();
     await seedParent(store);
+    // A real primary-key conflict leaves the row behind, which is the signal
+    // the handler reads back to tell a conflict from an outage.
     const conflicting = {
       ...store,
-      createAuthorization: async () => { throw new Error("UNIQUE constraint failed"); },
+      createAuthorization: async (rec: ScanAuthorization) => {
+        await store.createAuthorization(rec);
+        throw new Error("UNIQUE constraint failed: scan_authorizations.scan_id");
+      },
     } as ScanStore;
     const app = createApiApp(() => conflicting);
 
@@ -656,6 +661,31 @@ describe("invasion create validation", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain("authorized");
     expect(doCalls).toEqual([]);
+    expect(dispatches).toEqual([]);
+    // Nothing will ever launch this scan, so it must not stay queued forever.
+    const created = (await store.list(10)).find((s) => s.phase === "invasion")!;
+    expect(created.status).toBe("failed");
+  });
+
+  it("fails the queued scan and answers 500 when the authorization write fails", async () => {
+    const { env, store, doCalls, dispatches } = harness();
+    await seedParent(store);
+    const failing = {
+      ...store,
+      createAuthorization: async () => { throw new Error("D1_ERROR: Network connection lost"); },
+    } as ScanStore;
+    const app = createApiApp(() => failing);
+
+    const res = await postJson(app, env, "/scans", invasionPayload());
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Authorization could not be stored" });
+    expect(doCalls).toEqual([]);
+    expect(dispatches).toEqual([]);
+
+    const created = (await store.list(10)).find((s) => s.phase === "invasion")!;
+    expect(created.status).toBe("failed");
+    expect(created.error).toContain("Network connection lost");
+    expect((await store.events(created.id)).some((e) => e.event === "failed")).toBe(true);
   });
 });
 
@@ -965,5 +995,85 @@ describe("invasion retry", () => {
     const res = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain("authorization");
+  });
+
+  it("retries a standalone invasion more than once", async () => {
+    // Lineage, not parentage: a standalone retry links the copy to the
+    // original invasion row. Reading that invasion-phase row back as an
+    // explore parent 409'd the retry-of-retry forever.
+    const { env, store, dispatches } = harness();
+    const now = new Date().toISOString();
+    await store.create({
+      id: ORIG, target: "https://example.com/", phase: "invasion", status: "failed", parentScanId: null,
+      executor: "github", externalUrl: null, createdAt: now, updatedAt: now, completedAt: null,
+      error: "boom", options: null,
+    });
+    await store.createAuthorization({
+      scanId: ORIG, email: "operator@example.com", targets: ["https://example.com/"],
+      tools: ["nuclei"], active: false, confirmedAt: now,
+    });
+    const app = createApiApp(() => store);
+
+    const first = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
+    expect(first.status).toBe(201);
+    const firstId = ((await first.json()) as { id: string }).id;
+    expect((await store.get(firstId))!.parentScanId).toBe(ORIG);
+    await store.transition(firstId, ["running"], "failed", { error: "second attempt failed" });
+
+    const second = await app.request(`/scans/${firstId}/retry`, { method: "POST", headers: auth }, env);
+    expect(second.status).toBe(201);
+    const secondId = ((await second.json()) as { id: string }).id;
+
+    const copy = (await store.get(secondId))!;
+    expect(copy.phase).toBe("invasion");
+    // The link stays inside the invasion lineage (the standalone chain root),
+    // never an explore parent that would be re-validated on the next retry.
+    expect((await store.get(copy.parentScanId!))!.phase).toBe("invasion");
+    expect((await store.getAuthorization(secondId))!.targets).toEqual(["https://example.com/"]);
+    expect(dispatches).toHaveLength(2);
+    expect(JSON.parse(dispatches[1]!.body.inputs.targets!)).toEqual(["https://example.com/"]);
+    const retried = await store.events(firstId);
+    expect(retried.some((e) => e.event === "retried" && e.detail === secondId)).toBe(true);
+  });
+
+  it("keeps the 409 when a chained scan's explore parent is gone", async () => {
+    const { env, store, dispatches } = harness();
+    const now = new Date().toISOString();
+    await store.create({
+      id: ORIG, target: "https://example.com/", phase: "invasion", status: "failed", parentScanId: PARENT,
+      executor: "github", externalUrl: null, createdAt: now, updatedAt: now, completedAt: null,
+      error: "boom", options: null,
+    });
+    await store.createAuthorization({
+      scanId: ORIG, email: "operator@example.com", targets: ["https://example.com/"],
+      tools: ["nuclei"], active: false, confirmedAt: now,
+    });
+    const app = createApiApp(() => store);
+
+    const res = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain("Parent scan is no longer available");
+    expect(dispatches).toEqual([]);
+  });
+
+  it("marks the retried copy failed and answers 500 when the authorization write fails", async () => {
+    const { env, store, dispatches } = harness();
+    await seedParent(store);
+    await seedFailedInvasion(store, { targets: [...KEPT], tools: ["nuclei"], active: false });
+    const failing = {
+      ...store,
+      createAuthorization: async () => { throw new Error("D1_ERROR: too many SQL variables"); },
+    } as ScanStore;
+    const app = createApiApp(() => failing);
+
+    const res = await app.request(`/scans/${ORIG}/retry`, { method: "POST", headers: auth }, env);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Authorization could not be stored" });
+    expect(dispatches).toEqual([]);
+
+    const copy = (await store.list(10)).find((s) => s.id !== ORIG && s.phase === "invasion")!;
+    expect(copy.status).toBe("failed");
+    expect(copy.error).toContain("too many SQL variables");
+    expect((await store.events(copy.id)).some((e) => e.event === "failed")).toBe(true);
   });
 });
