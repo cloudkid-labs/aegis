@@ -1,9 +1,9 @@
 import type { Env } from "../env";
 import { json, jsonError, readJsonBody } from "../http";
-import { normalize } from "../normalizers/index";
+import { normalize, normalizeFindings } from "../normalizers/index";
 import { getTool } from "../registry";
 import type { ScanStore } from "../scan-store";
-import type { Asset } from "../types";
+import type { Asset, Finding } from "../types";
 
 const CALLBACK_BODY_LIMIT = 5 * 1024 * 1024;
 
@@ -34,6 +34,7 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
 
   const now = new Date().toISOString();
   const allAssets: Asset[] = [];
+  const allFindings: Finding[] = [];
 
   for (const artifact of artifacts ?? []) {
     // A resolved tool (alterx) sends the verification records as data and its
@@ -47,12 +48,28 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
     );
 
     const tool = getTool(artifact.tool);
+    // Route on the registry's outputType, never on the executor's labels. An
+    // unknown tool (an older executor still shipping a retired name) keeps the
+    // asset path it always had, so mixed-version callbacks keep ingesting.
+    if (tool?.outputType === "findings") {
+      // The label hashed into finding ids is the registry name; getTool only
+      // matches exact names, so it equals artifact.tool for a resolved entry.
+      const findings = await normalizeFindings(tool.normalizer, tool.name, artifact.data, scanId, now);
+      // rawRef is attribution, not identity: set it on the normalized findings
+      // before the insert and leave the ids the normalizer computed alone.
+      for (const finding of findings) finding.rawRef = rawRef;
+      allFindings.push(...findings);
+      continue;
+    }
     const normalizerKey = tool?.normalizer ?? `${artifact.tool}-${artifact.format}`;
     const assets = await normalize(normalizerKey, artifact.data, scanId, now);
     allAssets.push(...assets);
   }
 
   await store.insertAssets(allAssets);
+  // Idempotent on id: a finding reported twice in one callback (or by a
+  // re-delivered artifact) updates its row instead of duplicating it.
+  await store.insertFindings(allFindings);
   // Conditional: a cancel or timeout may have landed while artifacts were
   // uploading. Keep that terminal verdict rather than resurrecting the scan.
   const completed = await store.transition(scanId, ["queued", "running"], "completed", { completedAt: now });
@@ -62,7 +79,7 @@ export async function handleCallback(req: Request, env: Env, store: ScanStore, s
   }
   const failNote = Array.isArray(failures) && failures.length > 0 ? `; ${failures.length} tool failure(s): ${failures.join(", ")}` : "";
   const truncNote = Array.isArray(truncated) && truncated.length > 0 ? `; output truncated to fit callback limit: ${truncated.join(", ")}` : "";
-  await store.addEvent(scanId, "completed", `${allAssets.length} assets${failNote}${truncNote}`);
+  await store.addEvent(scanId, "completed", `${allAssets.length} assets; ${allFindings.length} findings${failNote}${truncNote}`);
 
-  return json({ ok: true, assets: allAssets.length });
+  return json({ ok: true, assets: allAssets.length, findings: allFindings.length });
 }

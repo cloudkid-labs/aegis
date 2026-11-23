@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import type { ScanStore } from "../scan-store";
 import { SESSION_COOKIE } from "../session";
 import { memorySessionStore } from "../session-store";
+import { nucleiRecord } from "../test-support/fixtures";
 import { memoryScanStore } from "../test-support/memory-store";
 import type { ScanRecord } from "../types";
 import { createApiApp } from "./api";
@@ -58,14 +59,26 @@ function harness(overrides: Partial<Env> = {}): Harness {
   return { env, store: memoryScanStore(), doCalls, dispatches };
 }
 
-function seed(store: ScanStore, id: string, status: ScanRecord["status"] = "queued"): Promise<void> {
+function seed(
+  store: ScanStore,
+  id: string,
+  status: ScanRecord["status"] = "queued",
+  phase: ScanRecord["phase"] = "explore",
+): Promise<void> {
   const now = new Date().toISOString();
   return store.create({
-    id, target: "https://example.com/", phase: "explore", status, parentScanId: null,
+    id, target: "https://example.com/", phase, status, parentScanId: null,
     executor: "github", externalUrl: null, createdAt: now, updatedAt: now,
     completedAt: null, error: null, options: null,
   });
 }
+
+// The real DO is pinned in src/scan-coordinator.workers.test.ts; callback
+// tests only need it to accept the token and the cancel that follows.
+const acceptingDo = {
+  idFromName: (n: string) => n,
+  get: () => ({ fetch: async () => new Response(null, { status: 200 }) }),
+} as unknown as DurableObjectNamespace;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -263,10 +276,6 @@ describe("operator gate: session or bearer", () => {
 
 describe("callback terminal-state guard", () => {
   const ID = "0123456789abcdef0123456789abcdef";
-  const acceptingDo = {
-    idFromName: (n: string) => n,
-    get: () => ({ fetch: async () => new Response(null, { status: 200 }) }),
-  } as unknown as DurableObjectNamespace;
   const callbackBody = JSON.stringify({ artifacts: [{ tool: "subfinder", format: "json", data: [{ host: "x.example.com" }] }] });
 
   it("completes a running scan", async () => {
@@ -339,6 +348,68 @@ describe("callback terminal-state guard", () => {
     expect(puts[0]!.key.endsWith(".txt")).toBe(true);
     expect(puts[0]!.type).toContain("text/plain");
     expect((await store.listAssets(ID)).map((a) => a.value)).toEqual(["x.example.com"]);
+  });
+});
+
+describe("callback findings routing", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+
+  it("ingests findings for a registry findings artifact and counts them in the event", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "running", "invasion");
+    env.SCAN_COORDINATOR = acceptingDo;
+    const puts: { key: string; body: string }[] = [];
+    env.ARTIFACTS = {
+      put: async (key: string, body: string) => { puts.push({ key, body }); },
+    } as unknown as R2Bucket;
+    const app = createApiApp(() => store);
+
+    const res = await app.request(`/executors/callback/${ID}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ artifacts: [{ tool: "nuclei", format: "jsonl", data: [nucleiRecord()] }] }),
+    }, env);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, assets: 0, findings: 1 });
+    expect((await store.get(ID))!.status).toBe("completed");
+
+    const findings = await store.listFindings(ID);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ scanId: ID, tool: "nuclei", severity: "high", url: "https://x.example/a" });
+    // The raw artifact is stored before ingestion and the finding points at it.
+    expect(puts).toHaveLength(1);
+    expect(findings[0]!.rawRef).toBe(puts[0]!.key);
+    expect(puts[0]!.key.startsWith(`scans/${ID}/raw/nuclei-`)).toBe(true);
+    expect(JSON.parse(puts[0]!.body)).toEqual([nucleiRecord()]);
+
+    const completed = (await store.events(ID)).find((e) => e.event === "completed");
+    expect(completed?.detail).toContain("1 findings");
+    expect(completed?.detail).toContain("0 assets");
+  });
+
+  it("keeps the asset path for assets tools and for a tool the registry does not know", async () => {
+    const { env, store } = harness();
+    await seed(store, ID, "running");
+    env.SCAN_COORDINATOR = acceptingDo;
+    env.ARTIFACTS = { put: async () => {} } as unknown as R2Bucket;
+    const app = createApiApp(() => store);
+
+    const res = await app.request(`/executors/callback/${ID}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        artifacts: [
+          { tool: "subfinder", format: "json", data: [{ host: "x.example.com" }] },
+          { tool: "legacy-scanner", format: "json", data: [{ anything: true }] },
+        ],
+      }),
+    }, env);
+
+    // The unknown tool resolves no asset normalizer but must not be routed
+    // into the findings path (nor fail the callback): old executors keep working.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, assets: 1, findings: 0 });
+    expect((await store.listAssets(ID)).map((a) => a.value)).toEqual(["x.example.com"]);
+    expect(await store.listFindings(ID)).toEqual([]);
   });
 });
 
