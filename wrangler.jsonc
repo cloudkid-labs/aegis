@@ -47,7 +47,7 @@
 	],
 	"assets": {
 		// Astro static build (astro.config.mjs). Every request enters the Worker
-		// first; src/index.ts answers /health and /api/* itself and hands
+		// first; src/index.ts answers /api/* itself and hands
 		// everything else to this binding, which serves /, /_astro/* and 404.html.
 		"directory": "./dist",
 		"binding": "ASSETS",
