@@ -14,7 +14,7 @@ OSS reconnaissance and penetration testing platform on Cloudflare Workers.
 
 ## Architecture
 
-- **Astro + Hono Worker** — static dashboard built by Astro to `./dist` and served through the `ASSETS` binding; `/api/*`, `/auth/*` and `/health` are answered by Hono in `src/index.ts`
+- **Astro + Hono Worker** — static dashboard built by Astro to `./dist` and served through the `ASSETS` binding; `/api/*` and `/auth/*` are answered by Hono in `src/index.ts`
 - **Google sign-in** — OIDC code flow + PKCE; a verified email must be on `AEGIS_ALLOWED_EMAILS` (deny-by-default). Sessions are SHA-256 hashes in D1, cookie `__Host-aegis_session`.
 - **Durable Object** — per-scan timeout alarm + single-use callback tokens
 - **D1** — scans, assets, findings, events, sessions

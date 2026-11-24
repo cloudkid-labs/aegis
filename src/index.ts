@@ -1,4 +1,4 @@
-// Worker entry. Routing: /health and /api/* go to Hono (the API lives in
+// Worker entry. Routing: /api/* goes to Hono (the API lives in
 // src/server/api.ts); every other path falls through to the Astro static
 // build in ./dist, bound as ASSETS. See astro.config.mjs for why there is no
 // Cloudflare adapter and src/security-headers.ts for the headers stamped on
@@ -15,7 +15,7 @@ import { d1SessionStore } from "./session-store";
 export { ScanCoordinator } from "./scan-coordinator";
 
 const app = new Hono<{ Bindings: Env }>({ strict: false });
-app.get("/health", () => json({ ok: true }, 202));
+app.get("/api/health", () => json({ ok: true }));
 app.route("/api", createApiApp((c) => d1ScanStore(c.env.AEGIS_DB)));
 
 // Google sign-in. Outside the operator gate: these establish or report the
@@ -34,7 +34,6 @@ app.notFound(() => jsonError("Not found", 404));
  */
 export function isAppRoute(pathname: string): boolean {
   return (
-    pathname === "/health" ||
     pathname === "/api" ||
     pathname.startsWith("/api/") ||
     pathname.startsWith("/auth/")

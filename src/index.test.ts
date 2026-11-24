@@ -5,14 +5,14 @@ const fakeAssets = { fetch: async () => new Response("404", { status: 404 }) };
 const baseEnv = { ASSETS: fakeAssets, AEGIS_API_KEY: "test-key" } as unknown as Record<string, unknown>;
 
 describe("routing", () => {
-  it("GET /health returns 202 with JSON", async () => {
-    const res = await worker.fetch(new Request("https://aegis.test/health"), baseEnv as never);
-    expect(res.status).toBe(202);
+  it("GET /api/health returns 200 with JSON", async () => {
+    const res = await worker.fetch(new Request("https://aegis.test/api/health"), baseEnv as never);
+    expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });
 
-  it("unknown paths fall through to assets", async () => {
-    const res = await worker.fetch(new Request("https://aegis.test/nope"), baseEnv as never);
+  it("the retired /health path falls through to assets", async () => {
+    const res = await worker.fetch(new Request("https://aegis.test/health"), baseEnv as never);
     expect(res.status).toBe(404);
   });
 
@@ -27,7 +27,7 @@ describe("routing", () => {
   });
 
   it("sets security headers on all responses", async () => {
-    const res = await worker.fetch(new Request("https://aegis.test/health"), baseEnv as never);
+    const res = await worker.fetch(new Request("https://aegis.test/api/health"), baseEnv as never);
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
   });
