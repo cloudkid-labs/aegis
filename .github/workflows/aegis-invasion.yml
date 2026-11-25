@@ -15,8 +15,8 @@ on:
       callback_url: { required: true, type: string }
       callback_token: { required: true, type: string }
       # Declared for the dispatch contract; the Durable Object's alarm is what
-      # enforces the real per-scan deadline. The job itself is capped below at
-      # 70 minutes, enough for the slowest ZAP full scan.
+      # enforces the real per-scan deadline. The job itself is capped below,
+      # allowing up to two hours for the slowest ZAP full scan.
       timeout_seconds: { required: false, type: string, default: "3600" }
       options: { required: false, type: string, default: "{}" }
 
@@ -24,7 +24,7 @@ jobs:
   invasion:
     name: Aegis Invasion ${{ inputs.target_url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 120
     steps:
       - name: Mask callback token
         run: echo "::add-mask::${{ inputs.callback_token }}"
