@@ -234,6 +234,10 @@ import "../styles/aegis.css";
             </select>
             <input id="finding-search" type="search" placeholder="Search findings" aria-label="Search findings" autocomplete="off" />
             <p id="finding-count" role="status"></p>
+            <div class="finding-export" aria-label="Export findings">
+              <button id="export-findings-csv" class="secondary" type="button">Export CSV</button>
+              <button id="export-findings-pdf" class="secondary" type="button">Export PDF</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table id="findings-table">
@@ -617,13 +621,7 @@ import "../styles/aegis.css";
       }
 
       function renderFindings() {
-        const severity = document.querySelector("#finding-severity").value;
-        const tool = document.querySelector("#finding-tool").value;
-        const query = document.querySelector("#finding-search").value;
-        const rows = detailFindings.filter((f) =>
-          (!severity || f.severity === severity)
-          && (!tool || f.tool === tool)
-          && matchesQuery(query, [f.title, f.url, f.tool, f.evidence]));
+        const rows = visibleFindings();
 
         const tbody = document.querySelector("#findings-table tbody");
         clear(tbody);
@@ -645,6 +643,56 @@ import "../styles/aegis.css";
         document.querySelector("#finding-count").textContent = detailFindings.length === 0
           ? ""
           : `${rows.length} of ${detailFindings.length} findings`;
+      }
+
+      function visibleFindings() {
+        const severity = document.querySelector("#finding-severity").value;
+        const tool = document.querySelector("#finding-tool").value;
+        const query = document.querySelector("#finding-search").value;
+        return detailFindings.filter((f) =>
+          (!severity || f.severity === severity)
+          && (!tool || f.tool === tool)
+          && matchesQuery(query, [f.title, f.url, f.tool, f.evidence]));
+      }
+
+      function exportFindingRows() {
+        return visibleFindings().map((f) => [
+          f.severity, f.tool, f.title, f.url, f.description, f.evidence, f.remediation,
+          f.cwe == null ? "" : `CWE-${f.cwe}`,
+        ]);
+      }
+
+      function downloadFile(name, content, type) {
+        const url = URL.createObjectURL(new Blob([content], { type }));
+        const link = el("a", null, { href: url, download: name });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function exportFindingsCsv() {
+        const quote = (value) => {
+          const text = String(value ?? "");
+          const safe = /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
+          return `"${safe.replaceAll('"', '""')}"`;
+        };
+        const rows = [["Severity", "Tool", "Title", "URL", "Description", "Evidence", "Remediation", "CWE"], ...exportFindingRows()];
+        downloadFile(`aegis-findings-${detailId}.csv`, `\uFEFF${rows.map((row) => row.map(quote).join(",")).join("\r\n")}`, "text/csv;charset=utf-8");
+      }
+
+      function exportFindingsPdf() {
+        const rows = exportFindingRows();
+        const report = window.open("", "_blank");
+        if (!report) {
+          document.querySelector("#finding-count").textContent = "Allow pop-ups to export the PDF.";
+          return;
+        }
+        const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+        const details = rows.map(([severity, tool, title, url, description, evidence, remediation, cwe]) =>
+          `<article><h2>${escape(title || "Untitled finding")}</h2><p><strong>${escape(severity)}</strong> · ${escape(tool)} · ${escape(cwe)}</p><p class="url">${escape(url)}</p>${description ? `<h3>Description</h3><p>${escape(description)}</p>` : ""}${evidence ? `<h3>Evidence</h3><p>${escape(evidence)}</p>` : ""}${remediation ? `<h3>Remediation</h3><p>${escape(remediation)}</p>` : ""}</article>`).join("");
+        report.document.write(`<!doctype html><html><head><title>Aegis findings</title><style>@page{size:auto;margin:18mm}body{font:12px Arial,sans-serif;color:#17212b}h1{font-size:22px}h2{font-size:15px;margin-bottom:4px}h3{font-size:11px;margin-bottom:2px}p{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0 10px}.url{color:#455d70}article{break-inside:avoid;border-top:1px solid #cbd5df;padding:8px 0}header{margin-bottom:18px}@media screen{body{max-width:900px;margin:40px auto;padding:0 24px}}</style></head><body><header><h1>Aegis findings</h1><p>${escape(detailScan?.target)} · ${escape(detailScan?.id)} · ${new Date().toLocaleString()} · ${rows.length} findings</p></header>${details || "<p>No findings match the current filters.</p>"}<script>window.addEventListener("load",()=>window.print())<\/script></body></html>`);
+        report.document.close();
       }
 
       // Invasion confirm. The preview is the server's own selection, so the
@@ -772,6 +820,8 @@ import "../styles/aegis.css";
       document.querySelector("#finding-severity").addEventListener("change", renderFindings);
       document.querySelector("#finding-tool").addEventListener("change", renderFindings);
       document.querySelector("#finding-search").addEventListener("input", renderFindings);
+      document.querySelector("#export-findings-csv").addEventListener("click", exportFindingsCsv);
+      document.querySelector("#export-findings-pdf").addEventListener("click", exportFindingsPdf);
 
       document.querySelector("#invade-btn").addEventListener("click", openInvasionConfirm);
       document.querySelector("#invasion-cancel-btn").addEventListener("click", () => {

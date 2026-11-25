@@ -513,6 +513,7 @@ fieldset label:has(input:focus-visible) { outline: 2px solid hsl(var(--ring)); o
 .detail-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-3); }
 .detail-toolbar input[type="search"] { flex: 1 1 220px; min-width: 0; }
 .detail-toolbar [role="status"] { margin: 0; font-size: 0.8rem; color: hsl(var(--faint)); font-variant-numeric: tabular-nums; }
+.finding-export { display: flex; gap: var(--sp-2); margin-left: auto; }
 
 /* tables — glass containment; only light separates the rows */
 .table-wrap {
