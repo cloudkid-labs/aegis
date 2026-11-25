@@ -83,6 +83,37 @@ describe("explore normalizers", () => {
     expect(meta.candidate).toBeUndefined();
   });
 
+  it("dnsx: drops records with no address data (NOERROR/NODATA zones)", async () => {
+    // cloudkid.link answers NOERROR + SOA authority (not NXDOMAIN) for labels
+    // that do not exist; dnsx emits those lines with no `a` field and we must
+    // not store them as subdomains.
+    const data = [
+      { host: "dev-monitoring.cloudkid.link" },
+      { host: "ads.cloudkid.link", a: [], cname: [] },
+      { host: "real.example.com", a: ["1.2.3.4"] },
+    ];
+    const assets = await normalizeDnsx(data, SCAN, NOW);
+    expect(assets.map((a) => a.value)).toEqual(["real.example.com"]);
+  });
+
+  it("dnsx: keeps IPv6-only hosts and records aaaa", async () => {
+    const assets = await normalizeDnsx([{ host: "v6.example.com", aaaa: ["2606:4700::1"] }], SCAN, NOW);
+    expect(assets.map((a) => a.value)).toEqual(["v6.example.com"]);
+    const meta = JSON.parse(assets[0]!.metadata!);
+    expect(meta.aaaa).toEqual(["2606:4700::1"]);
+    expect(meta.resolved).toBe(true);
+  });
+
+  it("alterx: drops permutations with no address data", async () => {
+    const data = [
+      { host: "bogus.example.com", a: [], cname: [] },
+      { host: "live.example.com", a: ["9.9.9.9"] },
+    ];
+    const assets = await normalizeAlterxResolved(data, SCAN, NOW);
+    expect(assets.map((a) => a.value)).toEqual(["live.example.com"]);
+    expect(JSON.parse(assets[0]!.metadata!).source).toBe("alterx");
+  });
+
   it("handles string JSONL input", async () => {
     const data = '{"host":"a.example.com"}\n{"host":"b.example.com"}';
     const assets = await normalizeSubfinder(data, SCAN, NOW);
@@ -105,7 +136,7 @@ describe("explore normalizers", () => {
   it("id namespace is independent of displayed type (dnsx=dns, naabu=port)", async () => {
     // The record factory keeps idKind separate from type on purpose: folding
     // them would re-key every dnsx/naabu asset and break dedup against history.
-    const dnsx = await normalizeDnsx([{ host: "api.example.com" }], SCAN, NOW);
+    const dnsx = await normalizeDnsx([{ host: "api.example.com", a: ["1.2.3.4"] }], SCAN, NOW);
     expect(dnsx[0]!.type).toBe("subdomain");
     expect(dnsx[0]!.id).toBe((await sha256Hex(`${SCAN}|dns|api.example.com`)).slice(0, 32));
 

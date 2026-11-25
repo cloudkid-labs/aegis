@@ -76,13 +76,25 @@ export const normalizeKatana = recordNormalizer({
   },
 });
 
+// A dnsx record is a discovery only when it carries an address. Zones like
+// cloudkid.link answer NOERROR + SOA authority (not NXDOMAIN) for labels that
+// do not exist, and dnsx emits those lines with no `a` field — storing them
+// turned 691 alterx permutations into "subdomains". aaaa is captured because
+// dnsx now queries AAAA too, and an IPv6-only host is real.
+function resolvedExtract(e: Record<string, unknown>, extra?: { source: string }): Extracted | null {
+  const host = e.host as string | undefined;
+  if (!host) return null;
+  const a = Array.isArray(e.a) ? e.a : [];
+  const aaaa = Array.isArray(e.aaaa) ? e.aaaa : [];
+  if (a.length === 0 && aaaa.length === 0) return null;
+  const cname = Array.isArray(e.cname) ? e.cname : [];
+  return { value: host, metadata: JSON.stringify({ a, aaaa, cname, resolved: true, ...(extra ?? {}) }) };
+}
+
 export const normalizeDnsx = recordNormalizer({
   type: "subdomain",
   idKind: "dns",
-  extract: (e) => {
-    const host = e.host as string | undefined;
-    return host ? { value: host, metadata: JSON.stringify({ a: e.a ?? [], cname: e.cname ?? [], resolved: true }) } : null;
-  },
+  extract: (e) => resolvedExtract(e),
 });
 
 export const normalizeNaabu = recordNormalizer({
@@ -106,8 +118,5 @@ export const CANDIDATE_MARKER = '"candidate":true';
 export const normalizeAlterxResolved = recordNormalizer({
   type: "subdomain",
   idKind: "dns",
-  extract: (e) => {
-    const host = e.host as string | undefined;
-    return host ? { value: host, metadata: JSON.stringify({ a: e.a ?? [], cname: e.cname ?? [], resolved: true, source: "alterx" }) } : null;
-  },
+  extract: (e) => resolvedExtract(e, { source: "alterx" }),
 });
