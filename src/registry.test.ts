@@ -49,6 +49,12 @@ describe("resolveWith", () => {
     expect(getTool("alterx")!.resolveWith).toBe("dnsx");
   });
 
+  it("dnsx queries A and AAAA explicitly (v1.2.2 -a default is false)", () => {
+    // dnsx only falls back to A when NO query type is specified (runner.go
+    // v1.2.2); passing -aaaa alone would drop A and lose every IPv4-only host.
+    expect(getTool("dnsx")!.args).toEqual(["-l", "{{hosts}}", "-json", "-a", "-aaaa", "-o", "/out/dnsx.json", "-silent"]);
+  });
+
   it("accepts resolveWith naming another entry in the same registry", () => {
     const tools = parseRegistry({ tools: [base({ name: "perm", resolveWith: "dnsx" }), base({ name: "dnsx" })] });
     expect(tools[0]!.resolveWith).toBe("dnsx");

@@ -15,7 +15,7 @@
       "phase": "explore",
       "executor": "github",
       "image": "projectdiscovery/dnsx:v1.2.2",
-      "args": ["-l", "{{hosts}}", "-json", "-aaaa", "-o", "/out/dnsx.json", "-silent"],
+      "args": ["-l", "{{hosts}}", "-json", "-a", "-aaaa", "-o", "/out/dnsx.json", "-silent"],
       "outputFormat": "json",
       "outputType": "assets",
       "normalizer": "dnsx-json"
