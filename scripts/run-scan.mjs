@@ -243,11 +243,20 @@ for (const tool of tools) {
     addArtifact(tool.name, "json", resolved, raw);
     continue;
   }
-  for (const entry of Array.isArray(data) ? data : []) {
-    if (!entry || typeof entry !== "object") continue;
-    for (const field of ["request", "response"]) {
-      if (typeof entry[field] === "string" && entry[field].length > PROOF_CAP) {
-        entry[field] = entry[field].slice(0, PROOF_CAP);
+  // Proof exchanges are clipped only under budget pressure: when the artifact
+  // fits, R2 (which stores exactly what the callback receives) keeps the full
+  // capture. Clipping first keeps whole findings from being dropped by the
+  // budget trim; a clipped side is flagged inside the normalizer as not
+  // replayable.
+  const proofBudget = used + JSON.stringify(data).length
+    + (typeof raw === "string" ? Math.min(raw.length, RAW_CAP) : 0);
+  if (proofBudget > BUDGET) {
+    for (const entry of Array.isArray(data) ? data : []) {
+      if (!entry || typeof entry !== "object") continue;
+      for (const field of ["request", "response"]) {
+        if (typeof entry[field] === "string" && entry[field].length > PROOF_CAP) {
+          entry[field] = entry[field].slice(0, PROOF_CAP);
+        }
       }
     }
   }

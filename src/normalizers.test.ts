@@ -193,6 +193,9 @@ describe("nuclei normalizer", () => {
     expect(proof.request.length).toBeLessThan(big.length);
     expect(proof.request).toMatch(/\[truncated\]$/);
     expect(proof.response).toMatch(/\[truncated\]$/);
+    // A clipped exchange cannot reproduce the original request, so it must
+    // never be advertised as replayable.
+    expect(proof.replayable).toBe(false);
   });
 
   it("hashes a stable id for the same record and a different one per url", async () => {

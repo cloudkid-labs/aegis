@@ -85,13 +85,22 @@ interface FindingFields {
 }
 
 /** Proof bodies are summarized, not archived: the full raw artifact stays in
- *  R2 behind rawRef, so a finding row only needs enough to replay by hand. */
+ *  R2 behind rawRef, so a finding row only needs enough to replay by hand.
+ *  `complete` tracks whether the whole exchange survived: a clipped side
+ *  cannot reproduce the original request. */
 const PROOF_CAP = 4000;
 
-function capped(value: unknown): string | null {
+interface Capped {
+  value: string;
+  complete: boolean;
+}
+
+function capped(value: unknown): Capped | null {
   const s = text(value);
   if (s === null) return null;
-  return s.length > PROOF_CAP ? `${s.slice(0, PROOF_CAP)}\n[truncated]` : s;
+  return s.length > PROOF_CAP
+    ? { value: `${s.slice(0, PROOF_CAP)}\n[truncated]`, complete: false }
+    : { value: s, complete: true };
 }
 
 // The tool name is part of the hash on purpose: zap-baseline and zap-full
@@ -143,12 +152,17 @@ export async function nucleiFindings(tool: string, data: unknown, scanId: string
       : text(record["matcher-name"]);
 
     // -include-rr puts the exact exchange on the record. Both sides are what
-    // makes it replayable: a lone response proves nothing about the request
-    // that produced it.
+    // makes it replayable, and only when neither was clipped: an oversized
+    // request whose body was cut cannot reproduce the original.
     const request = capped(record.request);
     const response = capped(record.response);
     const proof = request !== null || response !== null
-      ? JSON.stringify({ kind: "http", replayable: request !== null && response !== null, request, response })
+      ? JSON.stringify({
+          kind: "http",
+          replayable: request?.complete === true && response?.complete === true,
+          request: request?.value ?? null,
+          response: response?.value ?? null,
+        })
       : null;
 
     out.push(await buildFinding(scanId, now, {

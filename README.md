@@ -86,7 +86,7 @@ Findings aim to *prove* what they claim without exploiting anything:
 
 - nuclei runs with `-include-rr`, so each finding stores the exact request/response exchange as JSON `proof`; `replayable: true` only when both sides were captured. ZAP instances carry `replayable: false` — they are reported observations, never a captured exchange.
 - nuclei also runs with `-exclude-tags dos,intrusive`: destructive template classes never run, even when the operator selects nuclei.
-- Proof bodies are capped in the executor and again in the normalizer; full raw tool output stays in R2 behind `rawRef`.
+- Proof bodies are capped in the normalizer; the raw R2 artifact keeps the full exchange, clipped in the executor only when the callback budget would otherwise drop whole findings.
 
 ## Tests
 
