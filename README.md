@@ -9,7 +9,7 @@ OSS reconnaissance and penetration testing platform on Cloudflare Workers.
 | Phase | Status | Description |
 |-------|--------|-------------|
 | **Explore** | Phase 1 (MVP) | Passive recon: subfinder, dnsx, httpx, katana (+ optional naabu, alterx) |
-| **Invasion** | Phase 2 (MVP) | Active attacks: nuclei, ZAP baseline + opt-in full scan. Findings table, SARIF export, chained from Explore with per-scan authorization. |
+| **Invasion** | Phase 2 (MVP) | Active attacks: nuclei, ZAP baseline + opt-in full scan. Findings table with replayable request/response proof, SARIF export, chained from Explore with per-scan authorization. |
 | **Reporting** | Phase 3 | Scan diff, reports, tool registry UI, retention, Agent37 executor |
 
 ## Architecture
@@ -79,6 +79,14 @@ Sign-in (no auth required): `GET /auth/google/start`, `GET /auth/google/callback
 Templates: `{{target}}` (full URL), `{{host}}` (hostname), `{{hosts}}` (host list file), `{{urls}}` (invasion URL list), `{{depth}}` (crawl depth), `{{severity}}` (nuclei).
 
 Tools with `"default": false` (naabu, alterx, zap-full) only run when explicitly selected in the dashboard.
+
+## Proof without harm
+
+Findings aim to *prove* what they claim without exploiting anything:
+
+- nuclei runs with `-include-rr`, so each finding stores the exact request/response exchange as JSON `proof`; `replayable: true` only when both sides were captured. ZAP instances carry `replayable: false` — they are reported observations, never a captured exchange.
+- nuclei also runs with `-exclude-tags dos,intrusive`: destructive template classes never run, even when the operator selects nuclei.
+- Proof bodies are capped in the normalizer; the raw R2 artifact keeps the full exchange, clipped in the executor only when the callback budget would otherwise drop whole findings.
 
 ## Tests
 

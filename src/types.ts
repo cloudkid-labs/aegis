@@ -102,6 +102,10 @@ export interface Finding {
   remediation: string | null;
   /** R2 key of the raw tool output this finding was derived from. */
   rawRef: string | null;
+  /** JSON proof payload: the exact request/response pair nuclei captured
+   *  (`replayable: true`) or the ZAP instance detail (`replayable: false`,
+   *  observed evidence only). Null when the tool gave no verifiable evidence. */
+  proof: string | null;
   createdAt: string;
 }
 

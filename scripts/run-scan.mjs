@@ -111,6 +111,11 @@ const BUDGET = 4 * 1024 * 1024;
 // The raw wordlist rides along as evidence but must not eat the callback
 // budget: cap it and report the cut like any other truncation.
 const RAW_CAP = 200_000;
+// nuclei's -include-rr puts the exact request/response exchange on every
+// record: the replayable proof the worker stores with the finding. One large
+// response body must not push the callback over budget and drop whole
+// findings, so each side is clipped here; the normalizer records the cut.
+const PROOF_CAP = 8000;
 let used = 0;
 const truncated = [];
 function addArtifact(name, format, data, raw) {
@@ -238,6 +243,24 @@ for (const tool of tools) {
     addArtifact(tool.name, "json", resolved, raw);
     continue;
   }
+  // Proof exchanges are clipped only under budget pressure: when the artifact
+  // fits, R2 (which stores exactly what the callback receives) keeps the full
+  // capture. Clipping first keeps whole findings from being dropped by the
+  // budget trim; a clipped side is flagged inside the normalizer as not
+  // replayable.
+  const proofBudget = used + JSON.stringify(data).length
+    + (typeof raw === "string" ? Math.min(raw.length, RAW_CAP) : 0);
+  if (proofBudget > BUDGET) {
+    for (const entry of Array.isArray(data) ? data : []) {
+      if (!entry || typeof entry !== "object") continue;
+      for (const field of ["request", "response"]) {
+        if (typeof entry[field] === "string" && entry[field].length > PROOF_CAP) {
+          entry[field] = entry[field].slice(0, PROOF_CAP);
+        }
+      }
+    }
+  }
+
   addArtifact(tool.name, tool.outputFormat, data);
 }
 

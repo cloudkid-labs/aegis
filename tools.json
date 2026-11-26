@@ -68,7 +68,7 @@
       "phase": "invasion",
       "executor": "github",
       "image": "projectdiscovery/nuclei:v3.11.1",
-      "args": ["-l", "{{urls}}", "-severity", "{{severity}}", "-jsonl", "-o", "/out/nuclei.jsonl", "-no-color"],
+      "args": ["-l", "{{urls}}", "-severity", "{{severity}}", "-exclude-tags", "dos,intrusive", "-include-rr", "-jsonl", "-o", "/out/nuclei.jsonl", "-no-color"],
       "outputFormat": "jsonl",
       "outputType": "findings",
       "normalizer": "nuclei-jsonl"

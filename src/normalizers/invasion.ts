@@ -81,6 +81,26 @@ interface FindingFields {
   evidence: string | null;
   cwe: number | null;
   remediation: string | null;
+  proof: string | null;
+}
+
+/** Proof bodies are summarized, not archived: the full raw artifact stays in
+ *  R2 behind rawRef, so a finding row only needs enough to replay by hand.
+ *  `complete` tracks whether the whole exchange survived: a clipped side
+ *  cannot reproduce the original request. */
+const PROOF_CAP = 4000;
+
+interface Capped {
+  value: string;
+  complete: boolean;
+}
+
+function capped(value: unknown): Capped | null {
+  const s = text(value);
+  if (s === null) return null;
+  return s.length > PROOF_CAP
+    ? { value: `${s.slice(0, PROOF_CAP)}\n[truncated]`, complete: false }
+    : { value: s, complete: true };
 }
 
 // The tool name is part of the hash on purpose: zap-baseline and zap-full
@@ -101,6 +121,7 @@ async function buildFinding(scanId: string, now: string, fields: FindingFields):
     cwe: fields.cwe,
     remediation: fields.remediation,
     rawRef: null,
+    proof: fields.proof,
     createdAt: now,
   };
 }
@@ -130,6 +151,20 @@ export async function nucleiFindings(tool: string, data: unknown, scanId: string
       ? extracted.map((entry) => String(entry)).join("; ")
       : text(record["matcher-name"]);
 
+    // -include-rr puts the exact exchange on the record. Both sides are what
+    // makes it replayable, and only when neither was clipped: an oversized
+    // request whose body was cut cannot reproduce the original.
+    const request = capped(record.request);
+    const response = capped(record.response);
+    const proof = request !== null || response !== null
+      ? JSON.stringify({
+          kind: "http",
+          replayable: request?.complete === true && response?.complete === true,
+          request: request?.value ?? null,
+          response: response?.value ?? null,
+        })
+      : null;
+
     out.push(await buildFinding(scanId, now, {
       tool,
       ruleId: templateId ?? title,
@@ -143,6 +178,7 @@ export async function nucleiFindings(tool: string, data: unknown, scanId: string
       evidence,
       cwe: parseCwe(asRecord(info.classification)["cwe-id"]),
       remediation: text(info.remediation),
+      proof,
     }));
   }
   return out;
@@ -187,6 +223,22 @@ export async function zapFindings(tool: string, data: unknown, scanId: string, n
       const url = text(instance.uri);
       if (!url) continue;
 
+      // ZAP writes "" for "no parameter" and "no evidence"; the attack is
+      // the concrete proof when the instance has no evidence.
+      const attack = text(instance.attack);
+      const instanceEvidence = text(instance.evidence);
+      const proof = attack !== null || instanceEvidence !== null
+        ? JSON.stringify({
+            kind: "zap",
+            // An instance is a report of what ZAP observed; there is no
+            // captured exchange to replay, so never claim otherwise.
+            replayable: false,
+            method: text(instance.method),
+            attack,
+            evidence: instanceEvidence,
+          })
+        : null;
+
       out.push(await buildFinding(scanId, now, {
         tool,
         ruleId: text(alert.pluginid) ?? title,
@@ -195,12 +247,11 @@ export async function zapFindings(tool: string, data: unknown, scanId: string, n
         title,
         description: typeof alert.desc === "string" ? alert.desc : "",
         url,
-        // ZAP writes "" for "no parameter" and "no evidence"; the attack is
-        // the concrete proof when the instance has no evidence.
         parameter: text(instance.param),
-        evidence: text(instance.evidence) ?? text(instance.attack),
+        evidence: instanceEvidence ?? attack,
         cwe: parseCwe(alert.cweid),
         remediation: text(alert.solution),
+        proof,
       }));
     }
   }

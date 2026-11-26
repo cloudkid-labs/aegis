@@ -35,6 +35,7 @@ function finding(overrides: Partial<Finding> = {}): Finding {
     cwe: 79,
     remediation: "escape output",
     rawRef: "scans/scan-invasion-1/raw/nuclei-1.json",
+    proof: null,
     createdAt: NOW,
     ...overrides,
   };
