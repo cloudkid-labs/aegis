@@ -42,7 +42,7 @@ function asset(id: string, scanId: string, overrides: Partial<Asset> = {}): Asse
   };
 }
 
-function finding(id: string, scanId: string): Finding {
+function finding(id: string, scanId: string, overrides: Partial<Finding> = {}): Finding {
   return {
     id,
     scanId,
@@ -57,7 +57,9 @@ function finding(id: string, scanId: string): Finding {
     cwe: 79,
     remediation: null,
     rawRef: "raw/nuclei.sarif",
+    proof: null,
     createdAt: "2026-11-22T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -249,6 +251,19 @@ export function describeScanStoreContract(label: string, make: () => ScanStore):
       await store.insertFindings([finding("f1", "findings-a")]);
       expect((await store.listFindings("findings-a")).length).toBe(2);
       expect(await store.listFindings("findings-missing")).toEqual([]);
+    });
+
+    it("round-trips a finding's proof text unchanged", async () => {
+      const store = make();
+      await store.create(rec("proof-a"));
+      const proof = JSON.stringify({ kind: "http", replayable: true, request: "GET / HTTP/1.1", response: "HTTP/1.1 200 OK" });
+      await store.insertFindings([
+        finding("p1", "proof-a", { proof }),
+        finding("p2", "proof-a"),
+      ]);
+      const byId = new Map((await store.listFindings("proof-a")).map((f) => [f.id, f]));
+      expect(byId.get("p1")!.proof).toBe(proof);
+      expect(byId.get("p2")!.proof).toBeNull();
     });
 
     it("events append in insertion order", async () => {

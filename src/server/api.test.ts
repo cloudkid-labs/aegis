@@ -645,7 +645,7 @@ function finding(scanId: string, id: string, severity: Severity, createdAt: stri
   return {
     id, scanId, tool, severity, confidence: "high", title: `title-${id}`, description: "",
     url: "https://example.com/", parameter: null, evidence: null, cwe: null,
-    remediation: null, rawRef: null, createdAt,
+    remediation: null, rawRef: null, proof: null, createdAt,
   };
 }
 

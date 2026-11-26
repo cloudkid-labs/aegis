@@ -93,6 +93,7 @@ interface FindingRow {
   cwe: number | null;
   remediation: string | null;
   raw_ref: string | null;
+  proof: string | null;
   created_at: string;
 }
 
@@ -148,8 +149,9 @@ function toFinding(row: FindingRow): Finding {
     cwe: row.cwe,
     remediation: row.remediation,
     rawRef: row.raw_ref,
+    proof: row.proof,
     createdAt: row.created_at,
-  };
+  } as Finding;
 }
 
 /** D1 stores the lists as JSON text; callers get the arrays back. A row that
@@ -184,7 +186,7 @@ const SCAN_COLS_S = SCAN_COLS.split(", ").map((c) => `s.${c}`).join(", ");
 const ASSET_COLS = "id, scan_id, type, value, metadata, created_at";
 
 const FINDING_COLS =
-  "id, scan_id, tool, severity, confidence, title, description, url, parameter, evidence, cwe, remediation, raw_ref, created_at";
+  "id, scan_id, tool, severity, confidence, title, description, url, parameter, evidence, cwe, remediation, raw_ref, proof, created_at";
 
 export function d1ScanStore(db: D1Database): ScanStore {
   return {
@@ -312,13 +314,13 @@ export function d1ScanStore(db: D1Database): ScanStore {
     async insertFindings(findings) {
       if (findings.length === 0) return;
       const stmt = db.prepare(
-        `INSERT OR REPLACE INTO findings (${FINDING_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)`,
+        `INSERT OR REPLACE INTO findings (${FINDING_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)`,
       );
       await db.batch(
         findings.map((f) =>
           stmt.bind(
             f.id, f.scanId, f.tool, f.severity, f.confidence, f.title, f.description,
-            f.url, f.parameter, f.evidence, f.cwe, f.remediation, f.rawRef, f.createdAt,
+            f.url, f.parameter, f.evidence, f.cwe, f.remediation, f.rawRef, f.proof, f.createdAt,
           ),
         ),
       );

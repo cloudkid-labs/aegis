@@ -112,7 +112,7 @@ import "../styles/aegis.css";
             <li>
               <span class="step-num">3</span>
               <p class="step-title">Read ranked findings.</p>
-              <p class="step-body">Severity, evidence, remediation and a SARIF export per scan.</p>
+              <p class="step-body">Severity, replayable proof, remediation and a SARIF export per scan.</p>
             </li>
           </ol>
           <p class="strip-note">Explore and Invasion are live; Reporting lands in Phase 3.</p>
@@ -581,10 +581,34 @@ import "../styles/aegis.css";
           if (value == null || String(value).trim() === "") continue;
           list.append(el("dt", label), el("dd", value));
         }
+        const proof = proofDetail(f.proof);
+        if (proof) list.append(el("dt", "Proof"), proof);
         if (!list.firstChild) list.append(el("dt", "Details"), el("dd", "No further detail recorded."));
         cell.append(list);
         tr.append(cell);
         return tr;
+      }
+
+      // f.proof is JSON text written by the invasion normalizers. Parse
+      // defensively: rows written before the column existed are null, and a
+      // corrupt value must degrade to "no proof", never throw mid-render.
+      // Replayable means the exact exchange was captured; anything else is
+      // only what the tool reported observing.
+      function proofDetail(raw) {
+        if (!raw) return null;
+        let proof;
+        try { proof = JSON.parse(raw); } catch { return null; }
+        if (!proof || typeof proof !== "object") return null;
+        const dd = el("dd", null, { class: "finding-proof" });
+        dd.append(el("p", proof.replayable
+          ? "Replayable — the exact request and response were captured."
+          : "Observed — tool-reported evidence, not a captured exchange.",
+          { class: `proof-badge ${proof.replayable ? "proof-replayable" : "proof-observed"}` }));
+        for (const [label, value] of [["Request", proof.request], ["Response", proof.response], ["Method", proof.method], ["Attack", proof.attack]]) {
+          if (value == null || String(value).trim() === "") continue;
+          dd.append(el("p", label, { class: "proof-label" }), el("pre", String(value), { class: "proof-block" }));
+        }
+        return dd;
       }
 
       function toggleFinding(f, detail, button) {

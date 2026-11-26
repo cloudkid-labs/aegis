@@ -165,8 +165,34 @@ describe("nuclei normalizer", () => {
       cwe: 79,
       remediation: "r",
       rawRef: null,
+      // No request/response in the fixture: nothing to replay, so no proof.
+      proof: null,
       createdAt: NOW,
     });
+  });
+
+  it("captures the request/response pair as replayable proof", async () => {
+    const request = "GET /a HTTP/1.1\r\nHost: x.example\r\n\r\n";
+    const response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nproof";
+    const [f] = await normalizeNucleiJsonl([nucleiRecord({ request, response })], SCAN, NOW);
+    expect(JSON.parse(f!.proof!)).toEqual({ kind: "http", replayable: true, request, response });
+  });
+
+  it("keeps a one-sided capture but marks it not replayable", async () => {
+    const [f] = await normalizeNucleiJsonl([nucleiRecord({ response: "HTTP/1.1 200 OK" })], SCAN, NOW);
+    const proof = JSON.parse(f!.proof!);
+    expect(proof.replayable).toBe(false);
+    expect(proof.request).toBeNull();
+    expect(proof.response).toBe("HTTP/1.1 200 OK");
+  });
+
+  it("caps oversized proof bodies so one record cannot bloat its row", async () => {
+    const big = "x".repeat(10_000);
+    const [f] = await normalizeNucleiJsonl([nucleiRecord({ request: big, response: big })], SCAN, NOW);
+    const proof = JSON.parse(f!.proof!);
+    expect(proof.request.length).toBeLessThan(big.length);
+    expect(proof.request).toMatch(/\[truncated\]$/);
+    expect(proof.response).toMatch(/\[truncated\]$/);
   });
 
   it("hashes a stable id for the same record and a different one per url", async () => {
@@ -247,6 +273,8 @@ describe("zap normalizer", () => {
       cwe: 693,
       remediation: "s",
       rawRef: null,
+      // Empty attack/evidence strings are absence: nothing to conclude.
+      proof: null,
       createdAt: NOW,
     });
 
@@ -259,6 +287,9 @@ describe("zap normalizer", () => {
       title: "Missing CSP",
       severity: "medium",
       cwe: 693,
+      // ZAP reports an instance, not a replayable exchange: observed, never
+      // claimed replayable.
+      proof: JSON.stringify({ kind: "zap", replayable: false, method: "GET", attack: "q=proof", evidence: "proof" }),
     });
 
     // The single-instance alert in the same report.

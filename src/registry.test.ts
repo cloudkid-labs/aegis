@@ -97,7 +97,15 @@ describe("invasion tool configuration", () => {
     const nuclei = getTool("nuclei")!;
     // -l {{urls}}: the executor writes one selected URL per line; ZAP gets a
     // single entry point instead, so the two ingress shapes never drift.
-    expect(nuclei.args).toEqual(["-l", "{{urls}}", "-severity", "{{severity}}", "-jsonl", "-o", "/out/nuclei.jsonl", "-no-color"]);
+    // -include-rr attaches the exact request/response pair: the replayable
+    // proof stored with the finding. -exclude-tags dos,intrusive is the
+    // non-destructive guardrail — those templates must never run even when
+    // the operator selects nuclei.
+    expect(nuclei.args).toEqual([
+      "-l", "{{urls}}", "-severity", "{{severity}}",
+      "-exclude-tags", "dos,intrusive",
+      "-include-rr", "-jsonl", "-o", "/out/nuclei.jsonl", "-no-color",
+    ]);
     expect(nuclei.outputFormat).toBe("jsonl");
     expect(nuclei.outputType).toBe("findings");
     expect(nuclei.normalizer).toBe("nuclei-jsonl");

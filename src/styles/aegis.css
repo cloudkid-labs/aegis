@@ -634,6 +634,22 @@ tbody td[colspan] {
 .finding-detail-list dt { color: hsl(var(--faint)); font-size: 0.72rem; }
 .finding-detail-list dd { margin: 0; color: hsl(var(--muted)); overflow-wrap: anywhere; }
 
+/* proof block: the captured exchange, monospace and bounded so one large
+   body scrolls inside the row instead of stretching the table */
+.finding-proof { display: grid; gap: var(--sp-1); }
+.proof-badge { margin: 0; font-size: 0.78rem; font-weight: 600; }
+.proof-replayable { color: hsl(var(--ok)); }
+.proof-observed { color: hsl(var(--warn)); }
+.proof-label { margin: var(--sp-1) 0 0; color: hsl(var(--faint)); font-size: 0.72rem; }
+.proof-block {
+  margin: 0; padding: var(--sp-2);
+  max-height: 12rem; overflow: auto;
+  font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.5;
+  color: hsl(var(--fg)); white-space: pre-wrap; overflow-wrap: anywhere;
+  background-color: hsl(var(--shade) / 0.45);
+  border: 1px solid hsl(var(--glass-edge)); border-radius: var(--r-chip);
+}
+
 /* severity chip: the word carries the state, colour only reinforces it */
 .severity-chip {
   display: inline-block; padding: 2px var(--sp-2);
